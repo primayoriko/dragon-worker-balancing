@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dragon-tf-operator
+  namespace: kube-system
+
+---
+
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: dragon-tf-operator
+rules:
+- apiGroups: [""]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["kubeflow.org"]
+  resources: ["*"]
+  verbs: ["*"]
+
+---
+
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: dragon-tf-operator
+subjects:
+- kind: ServiceAccount
+  name: dragon-tf-operator
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: dragon-tf-operator
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dragon-tf-operator
+  namespace: kube-system
+  annotations:
+    scheduler.alpha.kubernetes.io/critical-pod: ""
+  labels:
+    app: dragon-tf-operator
+spec: 
+  serviceAccountName: dragon-tf-operator
+  priorityClassName: system-node-critical
+  tolerations:
+  - key: "CriticalAddonsOnly"
+    operator: "Exists"
+  - key: "role"
+    operator: "Exists"
+    effect: "NoSchedule"
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: "role"
+            operator: In
+            values: ["master"]
+  restartPolicy: Always
+  containers:
+  - name: dragon-tf-operator
+    image: gcr.io/dynamic-resource-scheduler-1/dragon
+    command: ["DRAGON", "-alsologtostderr"]
