@@ -54,6 +54,29 @@ func (this *JobQueue) Add(job *TrainingJob) {
 	*this = append(*this, job)
 }
 
+// add push function to jobqueue
+// this function is called for waitingqueue to make it so that it
+// resembles a priority queue
+func (this *JobQueue) Push(job *TrainingJob) {
+	if len(*this) == 0 || job.Annotations["priority"] != "high" {
+		*this = append(*this, job)
+		return
+	}
+
+	for i, j := range *this {
+		if j.Annotations["priority"] != "high" {
+			frontQueue := make([]*TrainingJob, len(*this))
+			copy(frontQueue, *this)
+			frontQueue = append(frontQueue[:i], job)
+			*this = append(frontQueue, (*this)[i:]...)
+			return
+		}
+	}
+
+	*this = append(*this, job)
+	return
+}
+
 func (this *JobQueue) Remove(job *TrainingJob) error {
 	ns, name := job.ObjectMeta.Namespace, job.ObjectMeta.Name
 	for i, j := range *this {
@@ -351,12 +374,27 @@ func SchedulingAlgorithm(
 	// High priority job first
 	if pendingResource != nil {
 		highPriorityJob = &cluster.PodRequests{pendingResource}
-	} else if now := metav1.Now(); len(*waitingQueue) > 0 {
+	} else {
+		// } else if now := metav1.Now(); len(*waitingQueue) > 0 {
 		// Job that waiting over 1 min first
 		// jobs in waitingQueue, the older the more front
-		if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
-			highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
-			// highPriorityTrainingJob = (*waitingQueue)[0]
+		// if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
+		// 	highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
+		// 	// highPriorityTrainingJob = (*waitingQueue)[0]
+		// } else {
+		// 	for _, job := range *waitingQueue {
+		// 		if job.Annotations["priority"] == "high" {
+		// 			highPriorityJob = job.GetMinInstanceWorkerPodRequests()
+		// 			break
+		// 		}
+		// 	}
+		// }
+		// only call scaledown function when there is a high priority job
+		for _, job := range *waitingQueue {
+			if job.Annotations["priority"] == "high" {
+				highPriorityJob = job.GetMinInstanceWorkerPodRequests()
+				break
+			}
 		}
 	}
 
