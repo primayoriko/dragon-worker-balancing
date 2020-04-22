@@ -1,69 +1,57 @@
 apiVersion: kubeflow.org/v1
 kind: TFJob
 metadata:
-  name: job4 
+  name: job4
+  annotations: 
+    priority: high
 spec:
-  max-instances: 4
-  min-instances: 1
+  max-instances: 3
+  min-instances: 3
   cleanPodPolicy: "All"
   tfReplicaSpecs:
-    Ps:
+    PS:
       replicas: 1
       restartPolicy: OnFailure
       template:
         spec:
           terminationGracePeriodSeconds: 0
           containers:
-          - name: tensorflow
+          - args:
+            - 'curl -s https://lsalab.cs.nthu.edu.tw/~ericyeh/DRAGON/mnist-df.py | python3 -'
             command:
-            - python
-            - /opt/model.py
-            - --tf-model-dir={model_dir}
-            - --tf-export-dir={export_path}
-            - --tf-train-steps={train_steps}
-            - --tf-batch-size={batch_size}
-            - --tf-learning-rate={learning_rate}
+            - /bin/bash
+            - -c
             image: tensorflow/tensorflow:1.15.0-py3
-            workingDir: /opt
-    Chief:
-      replicas: 1
-      template:
-        metadata:
-          annotations:
-            sidecar.istio.io/inject: "false"
-        spec:
-          serviceAccount: default-editor
-          containers:
-          - name: tensorflow
-            command:
-            - python
-            - /opt/model.py
-            - --tf-model-dir={model_dir}
-            - --tf-export-dir={export_path}
-            - --tf-train-steps={train_steps}
-            - --tf-batch-size={batch_size}
-            - --tf-learning-rate={learning_rate}
-            image: {image}
-            workingDir: /opt
-          restartPolicy: OnFailure
+            name: tensorflow
+            ports:
+            - containerPort: 2222
+              name: tfjob-port
     Worker:
-      replicas: 1
+      replicas: 3
+      restartPolicy: OnFailure
       template:
         metadata:
           annotations:
-            sidecar.istio.io/inject: "false"
+            "kubeshare/gpu_request": "0.5"
+            "kubeshare/gpu_limit": "1.0"
+            "kubeshare/gpu_mem": "3189243904" # 3G
         spec:
-          serviceAccount: default-editor
+          terminationGracePeriodSeconds: 0
           containers:
-          - name: tensorflow
+          - args:
+            - 'curl -s https://lsalab.cs.nthu.edu.tw/~ericyeh/DRAGON/mnist-df.py | python3 -'
+            env:
+            - name: global_steps
+              value: "100000"
             command:
-            - python
-            - /opt/model.py
-            - --tf-model-dir={model_dir}
-            - --tf-export-dir={export_path}
-            - --tf-train-steps={train_steps}
-            - --tf-batch-size={batch_size}
-            - --tf-learning-rate={learning_rate}
-            image: {image}
-            workingDir: /opt
-          restartPolicy: OnFailure
+            - /bin/bash
+            - -c
+            image: tensorflow/tensorflow:1.15.0-gpu-py3
+            name: tensorflow
+            ports:
+            - containerPort: 2222
+              name: tfjob-port
+            resources:
+              requests:
+                cpu: "1"
+                memory: "1Gi"

@@ -3,8 +3,8 @@ kind: TFJob
 metadata:
   name: job2
 spec:
-  max-instances: 2
-  min-instances: 2
+  max-instances: 4
+  min-instances: 1
   cleanPodPolicy: "All"
   tfReplicaSpecs:
     PS:
@@ -51,5 +51,5 @@ spec:
               name: tfjob-port
             resources:
               requests:
-                cpu: "2"
+                cpu: "1"
                 memory: "1Gi"
