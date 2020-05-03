@@ -44,7 +44,7 @@ func (this *JobQueue) PrintMe(whoami string) {
 	log.Infof("============ %s ============", whoami)
 	if this != nil {
 		for i, j := range *this {
-			log.Infof("%d: %s/%s", i, j.Namespace, j.Name)
+			log.Infof("%d: %s/%s/%f", i, j.Namespace, j.Name, j.Utility)
 		}
 	}
 	log.Infof("====================================")
@@ -58,13 +58,27 @@ func (this *JobQueue) Add(job *TrainingJob) {
 // this function is called for waitingqueue to make it so that it
 // resembles a priority queue
 func (this *JobQueue) Push(job *TrainingJob) {
-	if len(*this) == 0 || job.Annotations["priority"] != "high" {
+	if len(*this) == 0 {
 		*this = append(*this, job)
 		return
 	}
 
+	jobPSReq := job.ReplicaRequest[tfv1.TFReplicaTypePS]
+	jobWorkerReq := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+	jobCpuReq := jobPSReq.CpuReq + jobWorkerReq.CpuReq
+	jobMemReq := jobPSReq.MemReq + jobWorkerReq.MemReq
+	jobReq := jobCpuReq + jobMemReq
+
 	for i, j := range *this {
-		if j.Annotations["priority"] != "high" {
+		jPSReq := j.ReplicaRequest[tfv1.TFReplicaTypePS]
+		jWorkerReq := j.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+		jCpuReq := jPSReq.CpuReq + jWorkerReq.CpuReq
+		jMemReq := jPSReq.MemReq + jWorkerReq.MemReq
+		jReq := jCpuReq + jMemReq
+
+		// Queue prioritize job utility
+		// then prioritize jobs with low resource requirement
+		if job.Utility > j.Utility || (job.Utility == j.Utility && jobReq < jReq) {
 			frontQueue := make([]*TrainingJob, len(*this))
 			copy(frontQueue, *this)
 			frontQueue = append(frontQueue[:i], job)
@@ -96,6 +110,7 @@ type TrainingJob struct {
 	*tfv1.TFJob
 	ReplicasPlacementPlan map[tfv1.TFReplicaType]*JobPlacementPlan
 	ReplicaRequest        map[tfv1.TFReplicaType]*cluster.PodRequest
+	Utility               float64
 }
 
 func NewTrainingJob(tfjob *tfv1.TFJob) *TrainingJob {
@@ -107,6 +122,7 @@ func NewTrainingJob(tfjob *tfv1.TFJob) *TrainingJob {
 		TFJob:                 tfjob.DeepCopy(),
 		ReplicasPlacementPlan: make(map[tfv1.TFReplicaType]*JobPlacementPlan),
 		ReplicaRequest:        replicaReq,
+		Utility:               calculateUtility(tfjob),
 	}
 	return newJob
 }
@@ -158,6 +174,10 @@ func (this *TrainingJob) GetMinInstanceWorkerPodRequests() *cluster.PodRequests 
 		}
 	}
 	return &requests
+}
+
+func calculateUtility(job *tfv1.TFJob) float64 {
+	return float64(*job.Spec.Priority) / (1.0 + math.Exp(0))
 }
 
 /* ------------------- struct TrainingJob end ------------------- */
@@ -506,7 +526,7 @@ func SchedulingAlgorithm(
 	 * running queue.
 	 */
 
-	if now := metav1.Now(); now.Sub(lastActionTime.Time).Seconds() >= 60.0 {
+	if now := metav1.Now(); now.Sub(lastActionTime.Time).Seconds() >= 10.0 {
 		ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
 		if ok {
 			for job, plan := range placementPlan {
