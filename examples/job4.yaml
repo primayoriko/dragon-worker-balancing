@@ -2,11 +2,10 @@ apiVersion: kubeflow.org/v1
 kind: TFJob
 metadata:
   name: job4
-  annotations: 
-    priority: high
 spec:
   max-instances: 3
   min-instances: 3
+  priority: 100
   cleanPodPolicy: "All"
   tfReplicaSpecs:
     PS:
