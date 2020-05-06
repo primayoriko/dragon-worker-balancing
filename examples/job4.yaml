@@ -3,8 +3,8 @@ kind: TFJob
 metadata:
   name: job4
 spec:
-  max-instances: 3
-  min-instances: 3
+  max-instances: 4
+  min-instances: 2
   priority: 100
   cleanPodPolicy: "All"
   tfReplicaSpecs:
@@ -26,14 +26,9 @@ spec:
             - containerPort: 2222
               name: tfjob-port
     Worker:
-      replicas: 3
+      replicas: 2
       restartPolicy: OnFailure
       template:
-        metadata:
-          annotations:
-            "kubeshare/gpu_request": "0.5"
-            "kubeshare/gpu_limit": "1.0"
-            "kubeshare/gpu_mem": "3189243904" # 3G
         spec:
           terminationGracePeriodSeconds: 0
           containers:
@@ -45,7 +40,7 @@ spec:
             command:
             - /bin/bash
             - -c
-            image: tensorflow/tensorflow:1.15.0-gpu-py3
+            image: tensorflow/tensorflow:1.15.0-py3
             name: tensorflow
             ports:
             - containerPort: 2222

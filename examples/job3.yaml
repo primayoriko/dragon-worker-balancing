@@ -29,11 +29,6 @@ spec:
       replicas: 2
       restartPolicy: OnFailure
       template:
-        metadata:
-          annotations:
-            "kubeshare/gpu_request": "0.5"
-            "kubeshare/gpu_limit": "1.0"
-            "kubeshare/gpu_mem": "3189243904" # 3G
         spec:
           terminationGracePeriodSeconds: 0
           containers:
@@ -45,7 +40,7 @@ spec:
             command:
             - /bin/bash
             - -c
-            image: tensorflow/tensorflow:1.15.0-gpu-py3
+            image: tensorflow/tensorflow:1.15.0-py3
             name: tensorflow
             ports:
             - containerPort: 2222
