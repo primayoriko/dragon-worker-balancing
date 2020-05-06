@@ -392,14 +392,10 @@ func SchedulingAlgorithm(
 
 	/*
 	 * Scheduling Phase 1
-	 * Determine if there is a high priority job:
-	 * 1. Other pending Pod
-	 * 2. A job in waiting queue is waiting over 60 seconds (avoid starvation)
-	 * other jobs must waiting until cluster have free resource for high
-	 * priority job to be scheduled.
+	 * Determine if there is a high priority job based on utility
 	 *
 	 * If there is high priority job, try to schedule it through scale down.
-	 * ScaleDown is only called if high priority job exists.
+	 * Scale down is only called if high priority job exists.
 	 */
 
 	var highPriorityJob *cluster.PodRequests = nil
@@ -409,48 +405,12 @@ func SchedulingAlgorithm(
 	if pendingResource != nil {
 		highPriorityJob = &cluster.PodRequests{pendingResource}
 	}
-	// } else {
-	// } else if now := metav1.Now(); len(*waitingQueue) > 0 {
-	// Job that waiting over 1 min first
-	// jobs in waitingQueue, the older the more front
-	// if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
-	// 	highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
-	// 	// highPriorityTrainingJob = (*waitingQueue)[0]
-	// } else {
-	// 	for _, job := range *waitingQueue {
-	// 		if job.Annotations["priority"] == "high" {
-	// 			highPriorityJob = job.GetMinInstanceWorkerPodRequests()
-	// 			break
-	// 		}
-	// 	}
-	// }
-	// only call scaledown function when there is a high priority job
-	// for _, job := range *waitingQueue {
-	// 	if job.Annotations["priority"] == "high" {
-	// 		highPriorityJob = job.GetMinInstanceWorkerPodRequests()
-	// 		break
-	// 	}
-	// }
-	// }
 
 	var scaleDownFlag bool = false
-	// var scaleUpFlag bool = false
-
-	// if highPriorityJob != nil {
-	// 	ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
-	// 	if ok {
-	// 		scaleDownFlag = true
-	// 		for job, plan := range scaleDownPlan {
-	// 			job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
-	// 		}
-	// 	}
-	// 	lastActionTime = metav1.Now()
-	// }
 
 	if len(*waitingQueue) > 0 {
 		maxWaitingJobUtility := waitingQueue.GetFirstJob().Utility
 		maxRunningJobUtility := runningQueue.GetMaxUtility()
-		// elapsedTime := now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds()
 
 		if maxWaitingJobUtility > maxRunningJobUtility {
 			highPriorityJob := &([]*cluster.PodRequests{
@@ -471,7 +431,7 @@ func SchedulingAlgorithm(
 
 	/*
 	 * Scheduling Phase 2
-	 * If no high priority job, select a job can be scheduled from waiting
+	 * If no high priority job, select a job that can be scheduled from waiting
 	 * queue.
 	 */
 
@@ -559,9 +519,9 @@ func SchedulingAlgorithm(
 	}
 
 	/*
-	* Scheduling Phase 3
-	* If no any action over 60 secs, try to scale up workers of jobs in
-	* running queue.
+	 * Scheduling Phase 3
+	 * If scale down failed or queue is not empty
+	 * run scale up function
 	 */
 
 	if (highPriorityJob != nil && !scaleDownFlag) || len(*waitingQueue) == 0 {
@@ -573,20 +533,6 @@ func SchedulingAlgorithm(
 		}
 		lastActionTime = metav1.Now()
 	}
-
-	// if len(*waitingQueue) == 0 {
-	// 	scaleUpFlag = true
-	// }
-
-	// if now := metav1.Now(); now.Sub(lastActionTime.Time).Seconds() >= 30.0 || scaleUpFlag {
-	// 	ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
-	// 	if ok {
-	// 		for job, plan := range placementPlan {
-	// 			job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
-	// 		}
-	// 	}
-	// 	lastActionTime = metav1.Now()
-	// }
 }
 
 // ScheduleJob returns:
