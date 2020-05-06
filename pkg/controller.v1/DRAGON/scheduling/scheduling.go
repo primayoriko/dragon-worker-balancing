@@ -77,8 +77,8 @@ func (this *JobQueue) Push(job *TrainingJob) {
 		jReq := jCpuReq + jMemReq
 
 		// Queue prioritize job utility
-		// then prioritize jobs with low resource requirement
-		if job.Utility > j.Utility || (job.Utility == j.Utility && jobReq < jReq) {
+		// then prioritize jobs with high resource requirement
+		if job.Utility > j.Utility || (job.Utility == j.Utility && jobReq > jReq) {
 			frontQueue := make([]*TrainingJob, len(*this))
 			copy(frontQueue, *this)
 			frontQueue = append(frontQueue[:i], job)
@@ -100,6 +100,20 @@ func (this *JobQueue) Remove(job *TrainingJob) error {
 		}
 	}
 	return fmt.Errorf("Error when removing job: %s/%s from queue, the job is not in queue", job.ObjectMeta.Namespace, job.ObjectMeta.Name)
+}
+
+func (this *JobQueue) GetMaxUtility() (max float64) {
+	max = 0
+	for _, job := range *this {
+		if max < job.Utility {
+			max = job.Utility
+		}
+	}
+	return max
+}
+
+func (this *JobQueue) GetFirstJob() (job *TrainingJob) {
+	return (*this)[0]
 }
 
 /* ------------------- struct JobQueue end ------------------- */
@@ -394,41 +408,65 @@ func SchedulingAlgorithm(
 	// High priority job first
 	if pendingResource != nil {
 		highPriorityJob = &cluster.PodRequests{pendingResource}
-	} else {
-		// } else if now := metav1.Now(); len(*waitingQueue) > 0 {
-		// Job that waiting over 1 min first
-		// jobs in waitingQueue, the older the more front
-		// if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
-		// 	highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
-		// 	// highPriorityTrainingJob = (*waitingQueue)[0]
-		// } else {
-		// 	for _, job := range *waitingQueue {
-		// 		if job.Annotations["priority"] == "high" {
-		// 			highPriorityJob = job.GetMinInstanceWorkerPodRequests()
-		// 			break
-		// 		}
-		// 	}
-		// }
-		// only call scaledown function when there is a high priority job
-		for _, job := range *waitingQueue {
-			if job.Annotations["priority"] == "high" {
-				highPriorityJob = job.GetMinInstanceWorkerPodRequests()
-				break
-			}
-		}
 	}
+	// } else {
+	// } else if now := metav1.Now(); len(*waitingQueue) > 0 {
+	// Job that waiting over 1 min first
+	// jobs in waitingQueue, the older the more front
+	// if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
+	// 	highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
+	// 	// highPriorityTrainingJob = (*waitingQueue)[0]
+	// } else {
+	// 	for _, job := range *waitingQueue {
+	// 		if job.Annotations["priority"] == "high" {
+	// 			highPriorityJob = job.GetMinInstanceWorkerPodRequests()
+	// 			break
+	// 		}
+	// 	}
+	// }
+	// only call scaledown function when there is a high priority job
+	// for _, job := range *waitingQueue {
+	// 	if job.Annotations["priority"] == "high" {
+	// 		highPriorityJob = job.GetMinInstanceWorkerPodRequests()
+	// 		break
+	// 	}
+	// }
+	// }
 
 	var scaleDownFlag bool = false
+	// var scaleUpFlag bool = false
 
-	if highPriorityJob != nil {
-		ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
-		if ok {
-			scaleDownFlag = true
-			for job, plan := range scaleDownPlan {
-				job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
+	// if highPriorityJob != nil {
+	// 	ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
+	// 	if ok {
+	// 		scaleDownFlag = true
+	// 		for job, plan := range scaleDownPlan {
+	// 			job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
+	// 		}
+	// 	}
+	// 	lastActionTime = metav1.Now()
+	// }
+
+	if len(*waitingQueue) > 0 {
+		maxWaitingJobUtility := waitingQueue.GetFirstJob().Utility
+		maxRunningJobUtility := runningQueue.GetMaxUtility()
+		// elapsedTime := now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds()
+
+		if maxWaitingJobUtility > maxRunningJobUtility {
+			highPriorityJob := &([]*cluster.PodRequests{
+				(*waitingQueue)[0].GetPodRequests(tfv1.TFReplicaTypePS),
+				(*waitingQueue)[0].GetMinInstanceWorkerPodRequests(),
+			})
+
+			ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
+			if ok {
+				scaleDownFlag = true
+				for job, plan := range scaleDownPlan {
+					job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
+				}
 			}
+			lastActionTime = metav1.Now()
 		}
-		lastActionTime = metav1.Now()
 	}
 
 	/*
@@ -493,11 +531,11 @@ func SchedulingAlgorithm(
 				ok, placementPlans := ScheduleJob(
 					&([]*cluster.PodRequests{
 						job.GetPodRequests(tfv1.TFReplicaTypePS),
-						job.GetPodRequests(tfv1.TFReplicaTypeWorker),
+						job.GetMinInstanceWorkerPodRequests(),
 					}),
 					nodeRes,
 				)
-				// log.Infof("************** ERICYEH: OK NUM: %d", ok)
+				log.Infof("************** ERICYEH: OK NUM: %d", ok)
 				// log.Infof("************** ERICYEH: gpu: %d", job.ReplicaRequest[tfv1.TFReplicaTypeWorker].GpuReq)
 				if ok[0] >= int(*job.Spec.TFReplicaSpecs[tfv1.TFReplicaTypePS].Replicas) && ok[1] >= int(*job.Spec.MinInstances) {
 					job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] = (*placementPlans)[0]
@@ -514,19 +552,19 @@ func SchedulingAlgorithm(
 					job.Status.StartRunTime = &now
 
 					lastActionTime = metav1.Now()
-					break
+					return
 				}
 			}
 		}
 	}
 
 	/*
-	 * Scheduling Phase 3
-	 * If no any action over 60 secs, try to scale up workers of jobs in
-	 * running queue.
+	* Scheduling Phase 3
+	* If no any action over 60 secs, try to scale up workers of jobs in
+	* running queue.
 	 */
 
-	if now := metav1.Now(); now.Sub(lastActionTime.Time).Seconds() >= 10.0 {
+	if (highPriorityJob != nil && !scaleDownFlag) || len(*waitingQueue) == 0 {
 		ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
 		if ok {
 			for job, plan := range placementPlan {
@@ -535,6 +573,20 @@ func SchedulingAlgorithm(
 		}
 		lastActionTime = metav1.Now()
 	}
+
+	// if len(*waitingQueue) == 0 {
+	// 	scaleUpFlag = true
+	// }
+
+	// if now := metav1.Now(); now.Sub(lastActionTime.Time).Seconds() >= 30.0 || scaleUpFlag {
+	// 	ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
+	// 	if ok {
+	// 		for job, plan := range placementPlan {
+	// 			job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
+	// 		}
+	// 	}
+	// 	lastActionTime = metav1.Now()
+	// }
 }
 
 // ScheduleJob returns:
@@ -794,7 +846,7 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 
 // ScaleDown scale down other jobs let high priority job runs.
 // ScaleDown is only called if high priority job exists.
-func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
+func ScaleDown(highPriorityJob *[]*cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
 	log.Infof("================= ScaleDown Start =================")
 	defer log.Infof("================== ScaleDown End ==================")
 
@@ -819,9 +871,9 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 
 				// test if request can be scheduled
 				log.Infof("Scale Down schedule test start...")
-				ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+				ok, tmp := ScheduleJob(highPriorityJob, nodeRes)
 
-				if ok[0] == len(*highPriorityJob) {
+				if ok[0] >= 1 && ok[1] == len(*(*highPriorityJob)[1]) {
 					log.Infof("Scale Down successful!")
 					highPriorityJobPlacementPlan = tmp
 					can = true
@@ -873,9 +925,9 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 
 	// final test if request can be scheduled
 	log.Infof("Scale Down schedule test start...")
-	ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+	ok, tmp := ScheduleJob(highPriorityJob, nodeRes)
 
-	if ok[0] == len(*highPriorityJob) {
+	if ok[0] >= 1 && ok[1] == len(*(*highPriorityJob)[1]) {
 		log.Infof("Scale Down successful!")
 		highPriorityJobPlacementPlan = tmp
 		can = true
@@ -891,6 +943,7 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 	nodeRes := constNodeRes.DeepCopy()
 	scaleUpTarget = make(JobsPlacementPlan)
 
+	can = false
 	i := 0
 	runningJobsNum := len(runningQueue)
 	for nodeName, node := range *nodeRes {
@@ -901,6 +954,7 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 
 			stop := false
 			for j := int32(0); j < maxScaleUpNum; j++ {
+				log.Infof("%s///%s", job.Name, can)
 				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
 					stop = true
 					break
@@ -988,6 +1042,11 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 				break
 			}
 		}
+	}
+	if can {
+		log.Infof("Scale Up successful!")
+	} else {
+		log.Infof("Scale Up failed")
 	}
 
 	return
