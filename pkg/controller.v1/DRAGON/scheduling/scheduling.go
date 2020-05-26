@@ -524,15 +524,13 @@ func SchedulingAlgorithm(
 	 * run scale up function
 	 */
 
-	if (highPriorityJob != nil && !scaleDownFlag) || len(*waitingQueue) == 0 {
-		ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
-		if ok {
-			for job, plan := range placementPlan {
-				job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
-			}
+	ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
+	if ok {
+		for job, plan := range placementPlan {
+			job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
 		}
-		lastActionTime = metav1.Now()
 	}
+	lastActionTime = metav1.Now()
 }
 
 // ScheduleJob returns:
