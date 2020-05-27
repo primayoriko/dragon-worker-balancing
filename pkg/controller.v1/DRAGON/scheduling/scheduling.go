@@ -190,6 +190,19 @@ func (this *TrainingJob) GetMinInstanceWorkerPodRequests() *cluster.PodRequests 
 	return &requests
 }
 
+func (this *TrainingJob) GetMaxInstanceWorkerPodRequests() *cluster.PodRequests {
+	requests := make(cluster.PodRequests, 0)
+	for name:= range this.Spec.TFReplicaSpecs {
+		if name != tfv1.TFReplicaTypeWorker {
+			continue
+		}
+		for i := int32(0); i < *this.Spec.MaxInstances; i++ {
+			requests = append(requests, this.ReplicaRequest[name])
+		}
+	}
+	return &requests
+}
+
 func calculateUtility(job *tfv1.TFJob) float64 {
 	return float64(*job.Spec.Priority) / (1.0 + math.Exp(0))
 }
@@ -418,14 +431,43 @@ func SchedulingAlgorithm(
 				(*waitingQueue)[0].GetMinInstanceWorkerPodRequests(),
 			})
 
-			ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
-			if ok {
+			// try to schedule highPriorityJob
+			ok, placementPlans := ScheduleJob(
+				highPriorityJob,
+				nodeRes,
+			)
+			
+			job := (*waitingQueue)[0]
+			log.Infof("************** ERICYEH: OK NUM: %d", ok)
+			if ok[0] >= int(*job.Spec.TFReplicaSpecs[tfv1.TFReplicaTypePS].Replicas) && ok[1] >= int(*job.Spec.MinInstances) {
+				job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] = (*placementPlans)[0]
+				job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = (*placementPlans)[1]
+				for _, plan := range *job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] {
+					for _, worker := range *plan {
+						worker.Critical = true
+					}
+				}
+
+				waitingQueue.Remove(job)
+				runningQueue.Add(job)
+				now := metav1.Now()
+				job.Status.StartRunTime = &now
+
+				lastActionTime = metav1.Now()
+				log.Infof("AAAAAAAAAAAAAAAAAAA")
+				return
+			}
+
+			// highPriorityJob can't be scheduled, run scale down
+			can, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
+			if can {
 				scaleDownFlag = true
 				for job, plan := range scaleDownPlan {
 					job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
 				}
 			}
 			lastActionTime = metav1.Now()
+			log.Infof("BBBBBBBBBBB")
 		}
 	}
 
@@ -491,7 +533,7 @@ func SchedulingAlgorithm(
 				ok, placementPlans := ScheduleJob(
 					&([]*cluster.PodRequests{
 						job.GetPodRequests(tfv1.TFReplicaTypePS),
-						job.GetMinInstanceWorkerPodRequests(),
+						job.GetPodRequests(tfv1.TFReplicaTypeWorker),
 					}),
 					nodeRes,
 				)
@@ -898,7 +940,7 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 
 			stop := false
 			for j := int32(0); j < maxScaleUpNum; j++ {
-				log.Infof("%s///%s", job.Name, can)
+				log.Infof("%s///%d///%d///%s", job.Name, j, maxScaleUpNum, can)
 				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
 					stop = true
 					break
@@ -985,6 +1027,9 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 			if stop {
 				break
 			}
+		}
+		if can {
+			break
 		}
 	}
 	if can {

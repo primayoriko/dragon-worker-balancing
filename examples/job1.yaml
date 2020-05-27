@@ -26,7 +26,7 @@ spec:
             - containerPort: 2222
               name: tfjob-port
     Worker:
-      replicas: 4
+      replicas: 2
       restartPolicy: OnFailure
       template:
         spec:
@@ -48,4 +48,4 @@ spec:
             resources:
               requests:
                 cpu: "1"
-                memory: "1Gi"
+                memory: "2Gi"
