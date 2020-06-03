@@ -1,10 +1,10 @@
 apiVersion: kubeflow.org/v1
 kind: TFJob
 metadata:
-  name: job2
+  name: job11
 spec:
   max-instances: 4
-  min-instances: 2
+  min-instances: 3
   priority: 1
   cleanPodPolicy: "All"
   tfReplicaSpecs:
@@ -26,7 +26,7 @@ spec:
             - containerPort: 2222
               name: tfjob-port
     Worker:
-      replicas: 4
+      replicas: 3
       restartPolicy: OnFailure
       template:
         spec:

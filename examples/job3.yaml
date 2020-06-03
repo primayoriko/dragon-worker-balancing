@@ -3,7 +3,7 @@ kind: TFJob
 metadata:
   name: job3
 spec:
-  max-instances: 6
+  max-instances: 4
   min-instances: 1
   priority: 1
   cleanPodPolicy: "All"
@@ -47,5 +47,5 @@ spec:
               name: tfjob-port
             resources:
               requests:
-                cpu: "1"
-                memory: "2Gi"
+                cpu: "2"
+                memory: "4Gi"

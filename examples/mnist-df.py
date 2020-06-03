@@ -2,6 +2,7 @@ import argparse
 import sys
 import os
 import ast
+
 from tensorflow.examples.tutorials.mnist import input_data
 mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
@@ -72,3 +73,4 @@ if __name__ == "__main__":
   FLAGS.worker_hosts = ",".join(TF_CONFIG["cluster"]["worker"])
   FLAGS.global_steps = int(os.environ["global_steps"]) if "global_steps" in os.environ else 100000
   tf.app.run(main=main, argv=[sys.argv[0]])
+  

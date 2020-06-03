@@ -478,7 +478,7 @@ func (tc *TFController) reconcileTFJobs(tfjob *tfv1.TFJob) error {
 				log.Errorf("Error when update tfjob %s/%s time: %s", tfjob.Namespace, tfjob.Name, err)
 				return err
 			}
-			tc.WaitingQueue.Push(newJob)
+			tc.WaitingQueue.Add(newJob)
 			log.Infof("New job! %s/%s", newJob.Namespace, newJob.Name)
 		}
 	}
