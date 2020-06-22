@@ -72,6 +72,7 @@ type TFJobSpec struct {
 
 	MaxInstances *int32 `json:"max-instances"`
 	MinInstances *int32 `json:"min-instances"`
+	Priority     *int32 `json:"priority"`
 }
 
 // TFReplicaType is the type for TFReplica. Can be one of: "Chief"/"Master" (semantically equivalent),

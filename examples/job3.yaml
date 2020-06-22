@@ -1,22 +1,51 @@
-apiVersion: "kubeflow.org/v1"
-kind: "TFJob"
+apiVersion: kubeflow.org/v1
+kind: TFJob
 metadata:
-  name: "job3"
+  name: job3
 spec:
+  max-instances: 6
+  min-instances: 1
+  priority: 1
+  cleanPodPolicy: "All"
   tfReplicaSpecs:
     PS:
-      replicas: 2
-      restartPolicy: Never
+      replicas: 1
+      restartPolicy: OnFailure
       template:
         spec:
+          terminationGracePeriodSeconds: 0
           containers:
-            - name: tensorflow
-              image: gcr.io/dynamic-resource-scheduler-1/tf-dist-mnist-test:1.0
+          - args:
+            - 'curl -s https://lsalab.cs.nthu.edu.tw/~ericyeh/DRAGON/mnist-df.py | python3 -'
+            command:
+            - /bin/bash
+            - -c
+            image: tensorflow/tensorflow:1.15.0-py3
+            name: tensorflow
+            ports:
+            - containerPort: 2222
+              name: tfjob-port
     Worker:
-      replicas: 4
-      restartPolicy: Never
+      replicas: 2
+      restartPolicy: OnFailure
       template:
         spec:
+          terminationGracePeriodSeconds: 0
           containers:
-            - name: tensorflow
-              image: gcr.io/dynamic-resource-scheduler-1/tf-dist-mnist-test:1.0
+          - args:
+            - 'curl -s https://lsalab.cs.nthu.edu.tw/~ericyeh/DRAGON/mnist-df.py | python3 -'
+            env:
+            - name: global_steps
+              value: "100000"
+            command:
+            - /bin/bash
+            - -c
+            image: tensorflow/tensorflow:1.15.0-py3
+            name: tensorflow
+            ports:
+            - containerPort: 2222
+              name: tfjob-port
+            resources:
+              requests:
+                cpu: "2"
+                memory: "4Gi"

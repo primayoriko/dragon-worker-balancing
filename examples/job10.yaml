@@ -1,11 +1,11 @@
 apiVersion: kubeflow.org/v1
 kind: TFJob
 metadata:
-  name: job4
+  name: job10
 spec:
-  max-instances: 6
+  max-instances: 4
   min-instances: 2
-  priority: 100
+  priority: 1
   cleanPodPolicy: "All"
   tfReplicaSpecs:
     PS:
@@ -47,5 +47,5 @@ spec:
               name: tfjob-port
             resources:
               requests:
-                cpu: "2"
-                memory: "4Gi"
+                cpu: "4"
+                memory: "8Gi"
