@@ -18,26 +18,40 @@ spec:
     storage: false
   subresources:
     status: {}
+  # new
+  preserveUnknownFields: true  
   validation:
     openAPIV3Schema:
+      # new
+      type: object
       properties:
         spec:
+          # new
+          type: object
           properties:
             tfReplicaSpecs:
+              # new
+              type: object
               properties:
                 # The validation works when the configuration contains
                 # `Worker`, `PS` or `Chief`. Otherwise it will not be validated.
                 Worker:
+                  # new
+                  type: object
                   properties:
                     replicas:
                       type: integer
                       minimum: 1
                 PS:
+                  # new
+                  type: object
                   properties:
                     replicas:
                       type: integer
                       minimum: 1
                 Chief:
+                  # new
+                  type: object
                   properties:
                     replicas:
                       type: integer
