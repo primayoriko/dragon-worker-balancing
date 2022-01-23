@@ -21,7 +21,7 @@ spec:
             - containerPort: 2222
               name: tfjob-port
             resources:
-              limits:
+              requests:
                 cpu: "1"
                 memory: "1Gi"
     Worker:
@@ -41,6 +41,6 @@ spec:
             - containerPort: 2222
               name: tfjob-port
             resources:
-              limits:
+              requests:
                 cpu: "1"
                 memory: "1Gi"

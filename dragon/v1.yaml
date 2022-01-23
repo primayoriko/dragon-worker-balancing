@@ -63,7 +63,7 @@ spec:
   restartPolicy: Always
   containers:
   - name: dragon-tf-operator
-    image: erudite:latest
+    image: dragon:latest
     imagePullPolicy: IfNotPresent
     command: ["DRAGON", "-alsologtostderr"]
 
