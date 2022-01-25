@@ -43,8 +43,9 @@ type JobQueue []*TrainingJob
 func (this *JobQueue) PrintMe(whoami string) {
 	log.Infof("============ %s ============", whoami)
 	if this != nil {
-		for i, j := range *this {
-			log.Infof("%d: %s/%s", i, j.Namespace, j.Name)
+		for i, _ := range *this {
+			//log.Infof("%d: %s/%s", i, j.Namespace, j.Name)
+			log.Infof("%d", i)
 		}
 	}
 	log.Infof("====================================")
@@ -69,12 +70,16 @@ func (this *JobQueue) Remove(job *TrainingJob) error {
 
 /* ------------------- struct TrainingJob start ------------------- */
 
+// TODO: add dominant value field
 type TrainingJob struct {
 	*tfv1.TFJob
 	ReplicasPlacementPlan map[tfv1.TFReplicaType]*JobPlacementPlan
 	ReplicaRequest        map[tfv1.TFReplicaType]*cluster.PodRequest
+	//Namespace string
+	//Name string
 }
 
+// TODO: add dominant value initialization
 func NewTrainingJob(tfjob *tfv1.TFJob) *TrainingJob {
 	replicaReq := make(map[tfv1.TFReplicaType]*cluster.PodRequest)
 	for replica, replicaSpec := range tfjob.Spec.TFReplicaSpecs {
@@ -124,6 +129,7 @@ func (this *TrainingJob) GetPodRequests(rt tfv1.TFReplicaType) *cluster.PodReque
 	return &requests
 }
 
+// minta res sebanyak minimum worker , jadi array yg tiap2 nya resource worker (pod)
 func (this *TrainingJob) GetMinInstanceWorkerPodRequests() *cluster.PodRequests {
 	requests := make(cluster.PodRequests, 0)
 	for name := range this.Spec.TFReplicaSpecs {
@@ -316,9 +322,13 @@ func SchedulingAlgorithm(
 	highPrioritySharePodsQueueMutex *sync.Mutex,
 	nodeRes cluster.NodeResources,
 ) {
+	log.Errorf("================ Scheduling Algo Enter ===================")
+	defer log.Errorf("================ Scheduling Algo Exit ===================")
+
 	// check if high priority job exists
 	var pendingResource *cluster.PodRequest = nil
 	var pendingSharePod *kubesharev1.SharePod
+
 	highPrioritySharePodsQueueMutex.Lock()
 	for _, pod := range *highPrioritySharePodsQueue {
 		if val, ok := pod.ObjectMeta.Annotations["lsalab.nthu/priority"]; ok && val == "high" && pod.Spec.NodeName == "" {
@@ -344,6 +354,8 @@ func SchedulingAlgorithm(
 	 * If there is high priority job, try to schedule it through scale down.
 	 * ScaleDown is only called if high priority job exists.
 	 */
+
+	log.Errorf("================ Scheduling Algo P1 Enter ===================")
 
 	var highPriorityJob *cluster.PodRequests = nil
 	// var highPriorityTrainingJob *TrainingJob = nil
@@ -373,10 +385,12 @@ func SchedulingAlgorithm(
 		lastActionTime = metav1.Now()
 	}
 
+	log.Errorf("================ Scheduling Algo P2 Enter ===================")
+
 	/*
 	 * Scheduling Phase 2
-	 * If no high priority job, select a job can be scheduled from waiting
-	 * queue.
+	 * If no high priority job, or there is scale down that going to be performed,
+	 * select a job can be scheduled from waiting queue.
 	 */
 
 	if highPriorityJob == nil || scaleDownFlag {
@@ -462,6 +476,8 @@ func SchedulingAlgorithm(
 		}
 	}
 
+	log.Errorf("================ Scheduling Algo P3 Enter ===================")
+
 	/*
 	 * Scheduling Phase 3
 	 * If no any action over 60 secs, try to scale up workers of jobs in
@@ -479,6 +495,7 @@ func SchedulingAlgorithm(
 	}
 }
 
+// TODO: Add process to update dominant value
 // ScheduleJob returns:
 // * okNum: the max number of worker can be scheduled,
 // * placementPlan: placement plan of workers,
@@ -734,6 +751,7 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 	return
 }
 
+// TODO: update as in the report
 // ScaleDown scale down other jobs let high priority job runs.
 // ScaleDown is only called if high priority job exists.
 func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
@@ -827,8 +845,9 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 	return
 }
 
+// TODO: update as in the report
 func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleUpTarget JobsPlacementPlan) {
-	log.Infof("================= ScaleUp Start =================")
+	log.Infof("================= ScaleUp Start With %d Jobs =================", len(runningQueue))
 	defer log.Infof("================== ScaleUp End ==================")
 	nodeRes := constNodeRes.DeepCopy()
 	scaleUpTarget = make(JobsPlacementPlan)
@@ -836,14 +855,22 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 	i := 0
 	runningJobsNum := len(runningQueue)
 	for nodeName, node := range *nodeRes {
+		log.Infof("================= ScaleUp on Node: %s =================", nodeName)
 		for ; i < runningJobsNum; i++ {
+			log.Infof("================= ScaleUp on Node: %s & job index: %d =================", nodeName, i)
 			job := runningQueue[i]
 			maxScaleUpNum := *(job.Spec.MaxInstances) - int32(job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
 			request := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
 
 			stop := false
 			for j := int32(0); j < maxScaleUpNum; j++ {
+
+				log.Errorf("=====  On node %s : with job number %d , try to scale up by %d =====", nodeName, i, j + 1)
+				log.Errorf("=====  Status: CPU node: %d & request CPU: %d ; Memory node: %d & request memory: %d =====", node.CpuFree, request.CpuReq, node.MemFree, request.MemReq)
+
 				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
+					log.Errorf("=====  Node %s : with job number %d , scale up by %d failed =====", nodeName, i, j + 1)
+
 					stop = true
 					break
 				}
@@ -859,6 +886,8 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 						}
 						if !hasFreeGPU {
 							if node.GpuFreeCount <= 0 {
+								log.Errorf("=====  Node %s : with job number %d , scale up by %d failed by gpu kubeshare =====", nodeName, i, j + 1)
+
 								stop = true
 								break
 							} else {
@@ -896,6 +925,8 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 				} else { // nvidia.com/gpu
 					if request.GpuReq > 0 {
 						if node.GpuFreeCount < int(request.GpuReq/1000) {
+							log.Errorf("=====  Node %s : with job number %d , scale up by %d failed by gpu =====", nodeName, i, j + 1)
+
 							stop = true
 							log.Infof("Break in nvidia.com/gpu request")
 							break
@@ -925,6 +956,7 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 				}
 
 				can = true
+				log.Errorf("=====  Node %s : with job number %d , scale up by %d success =====", nodeName, i, j + 1)
 			}
 			if stop {
 				break
