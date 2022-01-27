@@ -49,7 +49,7 @@ func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKu
 			}
 		}
 	} else {
-		if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq / 1000) {
+		if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq/1000) {
 			return false
 		}
 	}
@@ -59,18 +59,14 @@ func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKu
 	return true
 }
 
-func getNodeNameOfPSNode(jobs []*TrainingJob) []string {
-	n := len(jobs)
+func getNodeNameOfJobsPSNode(jobs *JobQueue) []string {
+	n := len(*jobs)
 	PSNames := make([]string, n)
 
-	for i := 0; i < n; i++ {
-		job := jobs[i]
-		for nodeName, node := range *(job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS]) {
-			if len(*node) != 0 {
-				log.Infof("==== PS of job in index %d, located in Node %s ====", i, nodeName)
-				PSNames[i] = nodeName
-				break
-			}
+	for i, job := range *jobs {
+		for nodeName, _ := range *(job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS]) {
+			log.Infof("==== PS of job in index %d, located in Node %s ====", i, nodeName)
+			PSNames[i] = nodeName
 		}
 	}
 
@@ -87,7 +83,7 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 	canBeScaledNum := 0
 	canBeScaledJobs := make([]bool, runningJobsNum)
 	jobsWorkerNum := make([]int32, runningJobsNum)
-	PSNodeNames := getNodeNameOfPSNode(runningQueue)
+	PSNodeNames := getNodeNameOfJobsPSNode(&runningQueue)
 
 	for i := 0; i < runningJobsNum; i++ {
 		job := runningQueue[i]
@@ -99,18 +95,11 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 		}
 	}
 
-	for true {
-		if canBeScaledNum == 0 {
-			break
-		}
-
+	for canBeScaledNum != 0 {
 		selectedJobIdx := -1
 		for i := 0; i < runningJobsNum; i++ {
-			if !canBeScaledJobs[i] {
-				continue
-			}
-
-			if selectedJobIdx == -1 || jobsWorkerNum[i] < jobsWorkerNum[selectedJobIdx] {
+			if canBeScaledJobs[i] && (selectedJobIdx == -1 ||
+				jobsWorkerNum[i] < jobsWorkerNum[selectedJobIdx]) {
 				selectedJobIdx = i
 			}
 		}

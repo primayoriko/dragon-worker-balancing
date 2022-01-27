@@ -367,6 +367,7 @@ func SchedulingAlgorithm(
 		// Job that waiting over 1 min first
 		// jobs in waitingQueue, the older the more front
 		if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
+			// TODO: need to find out,  is this only by worker pod or all pod (including PS pod)
 			highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
 			// highPriorityTrainingJob = (*waitingQueue)[0]
 		}
