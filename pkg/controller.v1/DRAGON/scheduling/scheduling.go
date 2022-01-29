@@ -876,10 +876,8 @@ func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKu
 				//}
 			}
 		}
-	} else {
-		if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq/1000) {
-			return false
-		}
+	} else if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq/1000) {
+		return false
 	}
 
 	fmt.Println("found job with enough resources!")
@@ -988,16 +986,11 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 					}
 				}
 				if !hasFreeGPU {
-					if node.GpuFreeCount <= 0 {
-						stop = true
-						break
-					} else {
-						node.GpuFreeCount--
-						freeGPUID = kubesharev1.NewGPUID(5)
-						node.GpuFree[freeGPUID] = &cluster.GPUInfo{
-							GPUFreeReq: 1000,
-							GPUFreeMem: node.GpuMemTotal,
-						}
+					node.GpuFreeCount--
+					freeGPUID = kubesharev1.NewGPUID(5)
+					node.GpuFree[freeGPUID] = &cluster.GPUInfo{
+						GPUFreeReq: 1000,
+						GPUFreeMem: node.GpuMemTotal,
 					}
 				}
 			}
