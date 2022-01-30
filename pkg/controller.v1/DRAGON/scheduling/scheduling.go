@@ -847,9 +847,13 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 }
 
 func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKubeShare bool) bool {
+	log.Infof("================= isEnoughResources Start =================")
+	defer log.Infof("================== isEnoughResources End ==================")
+
 	request := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
 
 	if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
+		log.Infof("========== not enough CPU [need %d from %d available] or Mem [need %d from %d available] ============", request.CpuReq, node.CpuFree, request.MemReq, node.MemFree)
 		return false
 	}
 
@@ -863,6 +867,7 @@ func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKu
 				}
 			}
 			if !hasFreeGPU && node.GpuFreeCount <= 0 {
+				log.Infof("========== not enough GPU KubeShare [GPU free count: %d and no free gpu] ============", node.GpuFreeCount)
 				return false
 				//if node.GpuFreeCount <= 0 {
 				//	return false
@@ -877,10 +882,11 @@ func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKu
 			}
 		}
 	} else if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq/1000) {
+		log.Infof("========== not enough GPU [need %d from %d available] ============", request.GpuReq, node.GpuFreeCount)
 		return false
 	}
 
-	fmt.Println("found job with enough resources!")
+	log.Infof("======== resource enough for the job ========")
 
 	return true
 }
@@ -927,7 +933,7 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 		if canBeScaledJobs[i] {
 			flg = 1
 		}
-		log.Infof("======== Job %d => curr worker %d, is can be scaled: %d =======", i, jobsWorkerNum[i], flg)
+		log.Infof("======== Job [%d]: curr worker %d, is can be scaled: %d =======", i, jobsWorkerNum[i], flg)
 	}
 
 	log.Infof("======== ScaleUp initially has %d jobs can be scaled up =======", canBeScaledNum)
@@ -950,22 +956,23 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 		var node *cluster.NodeResource = nil
 		nodeName := ""
 
+		log.Infof("======== Check node [%s] resources for scale up job with index %d =======", PSNodeNames[selectedJobIdx], selectedJobIdx)
 		if isEnoughResources(job, priorityNode, option.KubeShareSupport) {
-			log.Infof("======== Check node [%s] resources for scale up job with index %d =======", PSNodeNames[selectedJobIdx], selectedJobIdx)
+			log.Infof("======== Checked node [%s] resources for scale up job with index %d =======", PSNodeNames[selectedJobIdx], selectedJobIdx)
 			node, nodeName = priorityNode, PSNodeNames[selectedJobIdx]
 		} else {
 			for currNodeName, currNode := range *nodeRes {
-				log.Infof("======== Check node [%s] resources for scale up job with index %d =======", currNodeName, selectedJobIdx)
+				log.Infof("======== LP - Check node [%s] resources for scale up job with index %d =======", currNodeName, selectedJobIdx)
 				if currNode != priorityNode && isEnoughResources(job, currNode, option.KubeShareSupport) {
+					log.Infof("======== LP - Checked node [%s] resources for scale up job with index %d =======", currNodeName, selectedJobIdx)
 					node, nodeName = currNode, currNodeName
 					break
 				}
 			}
 		}
 
-		log.Infof("======== Node [%s] selected for job with index %d =======", nodeName, selectedJobIdx)
-
 		if node != nil {
+			log.Infof("======== Node [%s] selected for job with index %d =======", nodeName, selectedJobIdx)
 			if !option.KubeShareSupport {
 				node.CpuFree -= request.CpuReq
 				node.MemFree -= request.MemReq
@@ -1043,6 +1050,14 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 			canBeScaledNum--
 			continue
 		}
+	}
+
+	for i := 0; i < runningJobsNum; i++ {
+		flg := 0
+		if canBeScaledJobs[i] {
+			flg = 1
+		}
+		log.Infof("======== Job [%d]: curr worker %d, is can be scaled: %d =======", i, jobsWorkerNum[i], flg)
 	}
 
 	return
