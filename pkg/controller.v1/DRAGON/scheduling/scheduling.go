@@ -912,6 +912,13 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 	log.Infof("================= ScaleUp Start With %d Jobs =================", len(runningQueue))
 	defer log.Infof("================== ScaleUp End ==================")
 
+	kubeSuppStrLog := "kubeShare supp not available"
+	if option.KubeShareSupport {
+		kubeSuppStrLog = "kubeShare supp is available"
+	}
+
+	log.Infof("========== %s =========", kubeSuppStrLog)
+
 	nodeRes := constNodeRes.DeepCopy()
 	scaleUpTarget = make(JobsPlacementPlan)
 	runningJobsNum := len(runningQueue)
@@ -973,27 +980,51 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 
 		if node != nil {
 			log.Infof("======== Node [%s] selected for job with index %d =======", nodeName, selectedJobIdx)
+
+			if _, ok := scaleUpTarget[job]; !ok {
+				scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+			}
+
+			if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
+				(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
+			}
+
+			t := &WorkerResources{
+				Workers:  map[string]string{},
+				Critical: false,
+			}
+
+			(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
+
+			node.CpuFree -= request.CpuReq
+			node.MemFree -= request.MemReq
+
 			if !option.KubeShareSupport {
-				node.CpuFree -= request.CpuReq
-				node.MemFree -= request.MemReq
 				if request.GpuReq > 0 {
 					node.GpuFreeCount -= int(request.GpuReq / 1000)
-				}
-
-				if _, ok := scaleUpTarget[job]; !ok {
-					scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-				}
-				if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
-					(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
-				}
-				t := &WorkerResources{
-					Workers:  map[string]string{},
-					Critical: false,
-				}
-				(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
-				if request.GpuReq > 0 {
 					(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
 				}
+				//node.CpuFree -= request.CpuReq
+				//node.MemFree -= request.MemReq
+
+				//if _, ok := scaleUpTarget[job]; !ok {
+				//	scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+				//}
+				//
+				//if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
+				//	(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
+				//}
+				//
+				//t := &WorkerResources{
+				//	Workers:  map[string]string{},
+				//	Critical: false,
+				//}
+				//
+				//(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
+				//
+				//if request.GpuReq > 0 {
+				//	(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
+				//}
 			} else {
 				hasFreeGPU, freeGPUID := false, ""
 				if request.GpuReq > 0 {
@@ -1011,34 +1042,41 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 							GPUFreeMem: node.GpuMemTotal,
 						}
 					}
-				}
-
-				node.CpuFree -= request.CpuReq
-				node.MemFree -= request.MemReq
-				if request.GpuReq > 0 {
-					node.GpuFree[freeGPUID].GPUFreeReq -= request.GpuReq
-					node.GpuFree[freeGPUID].GPUFreeMem -= request.GpuMemReq
-				}
-
-				if _, ok := scaleUpTarget[job]; !ok {
-					scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-				}
-				if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
-					(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
-				}
-				t := &WorkerResources{
-					Workers:  map[string]string{},
-					Critical: false,
-				}
-				(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
-				if request.GpuReq > 0 {
 					(*t).Workers[cluster.ResourceKubeShareGPU] = freeGPUID
 				}
+
+				//node.CpuFree -= request.CpuReq
+				//node.MemFree -= request.MemReq
+				//
+				//if request.GpuReq > 0 {
+				//	node.GpuFree[freeGPUID].GPUFreeReq -= request.GpuReq
+				//	node.GpuFree[freeGPUID].GPUFreeMem -= request.GpuMemReq
+				//}
+				//
+				//if _, ok := scaleUpTarget[job]; !ok {
+				//	scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+				//}
+				//
+				//if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
+				//	(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
+				//}
+				//
+				//t := &WorkerResources{
+				//	Workers:  map[string]string{},
+				//	Critical: false,
+				//}
+				//
+				//(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
+
+				//if request.GpuReq > 0 {
+				//	(*t).Workers[cluster.ResourceKubeShareGPU] = freeGPUID
+				//}
 			}
+			jobsWorkerNum[selectedJobIdx]++
+			can = true
 			log.Infof("======== Finished scale up in Node [%s] for job with index %d =======", nodeName, selectedJobIdx)
 		}
 
-		jobsWorkerNum[selectedJobIdx]++
 		if node == nil || jobsWorkerNum[selectedJobIdx] >= *(job.Spec.MaxInstances) {
 			if node == nil {
 				log.Infof("======== No node found for job with index %d =======", selectedJobIdx)
@@ -1048,7 +1086,12 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 
 			canBeScaledJobs[selectedJobIdx] = false
 			canBeScaledNum--
-			continue
+		}
+	}
+
+	for i, job := range runningQueue {
+		for name, node := range *scaleUpTarget[job] {
+			log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
 		}
 	}
 
