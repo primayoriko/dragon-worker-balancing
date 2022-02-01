@@ -869,16 +869,6 @@ func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKu
 			if !hasFreeGPU && node.GpuFreeCount <= 0 {
 				log.Infof("========== not enough GPU KubeShare [GPU free count: %d and no free gpu] ============", node.GpuFreeCount)
 				return false
-				//if node.GpuFreeCount <= 0 {
-				//	return false
-				//} else {
-				//	node.GpuFreeCount--
-				//	freeGPUID = kubesharev1.NewGPUID(5)
-				//	node.GpuFree[freeGPUID] = &cluster.GPUInfo{
-				//		GPUFreeReq: 1000,
-				//		GPUFreeMem: node.GpuMemTotal,
-				//	}
-				//}
 			}
 		}
 	} else if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq/1000) {
@@ -1089,11 +1079,13 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 		}
 	}
 
-	for i, job := range runningQueue {
-		for name, node := range *scaleUpTarget[job] {
-			log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
-		}
-	}
+	//for i, job := range runningQueue {
+	//	if _, ok := scaleUpTarget[job]; ok {
+	//		for name, node := range *scaleUpTarget[job] {
+	//			log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
+	//		}
+	//	}
+	//}
 
 	for i := 0; i < runningJobsNum; i++ {
 		flg := 0
