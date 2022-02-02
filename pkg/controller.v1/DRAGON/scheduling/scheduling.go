@@ -902,12 +902,11 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 	log.Infof("================= ScaleUp Start With %d Jobs =================", len(runningQueue))
 	defer log.Infof("================== ScaleUp End ==================")
 
-	kubeSuppStrLog := "kubeShare supp not available"
+	kubeSuppLogStr := "kubeShare supp not available"
 	if option.KubeShareSupport {
-		kubeSuppStrLog = "kubeShare supp is available"
+		kubeSuppLogStr = "kubeShare supp is available"
 	}
-
-	log.Infof("========== %s =========", kubeSuppStrLog)
+	log.Infof("========== %s =========", kubeSuppLogStr)
 
 	nodeRes := constNodeRes.DeepCopy()
 	scaleUpTarget = make(JobsPlacementPlan)
@@ -926,11 +925,11 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 			canBeScaledNum++
 		}
 
-		flg := 0
+		scaleLogStr := "cannot be scaled"
 		if canBeScaledJobs[i] {
-			flg = 1
+			scaleLogStr = "can be scaled"
 		}
-		log.Infof("======== Job [%d]: curr worker %d, is can be scaled: %d =======", i, jobsWorkerNum[i], flg)
+		log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
 	}
 
 	log.Infof("======== ScaleUp initially has %d jobs can be scaled up =======", canBeScaledNum)
@@ -994,27 +993,6 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 					node.GpuFreeCount -= int(request.GpuReq / 1000)
 					(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
 				}
-				//node.CpuFree -= request.CpuReq
-				//node.MemFree -= request.MemReq
-
-				//if _, ok := scaleUpTarget[job]; !ok {
-				//	scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-				//}
-				//
-				//if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
-				//	(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
-				//}
-				//
-				//t := &WorkerResources{
-				//	Workers:  map[string]string{},
-				//	Critical: false,
-				//}
-				//
-				//(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
-				//
-				//if request.GpuReq > 0 {
-				//	(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
-				//}
 			} else {
 				hasFreeGPU, freeGPUID := false, ""
 				if request.GpuReq > 0 {
@@ -1034,33 +1012,6 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 					}
 					(*t).Workers[cluster.ResourceKubeShareGPU] = freeGPUID
 				}
-
-				//node.CpuFree -= request.CpuReq
-				//node.MemFree -= request.MemReq
-				//
-				//if request.GpuReq > 0 {
-				//	node.GpuFree[freeGPUID].GPUFreeReq -= request.GpuReq
-				//	node.GpuFree[freeGPUID].GPUFreeMem -= request.GpuMemReq
-				//}
-				//
-				//if _, ok := scaleUpTarget[job]; !ok {
-				//	scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-				//}
-				//
-				//if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
-				//	(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
-				//}
-				//
-				//t := &WorkerResources{
-				//	Workers:  map[string]string{},
-				//	Critical: false,
-				//}
-				//
-				//(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
-
-				//if request.GpuReq > 0 {
-				//	(*t).Workers[cluster.ResourceKubeShareGPU] = freeGPUID
-				//}
 			}
 			jobsWorkerNum[selectedJobIdx]++
 			can = true
@@ -1097,128 +1048,6 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 
 	return
 }
-
-// TODO: update as in the report
-//func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleUpTarget JobsPlacementPlan) {
-//	log.Infof("================= ScaleUp Start With %d Jobs =================", len(runningQueue))
-//	defer log.Infof("================== ScaleUp End ==================")
-//	nodeRes := constNodeRes.DeepCopy()
-//	scaleUpTarget = make(JobsPlacementPlan)
-//
-//	i := 0
-//	runningJobsNum := len(runningQueue)
-//	for nodeName, node := range *nodeRes {
-//		log.Infof("================= ScaleUp on Node: %s =================", nodeName)
-//		for ; i < runningJobsNum; i++ {
-//			log.Infof("================= ScaleUp on Node: %s & job index: %d =================", nodeName, i)
-//			job := runningQueue[i]
-//			maxScaleUpNum := *(job.Spec.MaxInstances) - int32(job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
-//			request := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
-//
-//			stop := false
-//			for j := int32(0); j < maxScaleUpNum; j++ {
-//
-//				log.Errorf("=====  On node %s : with job number %d , try to scale up by %d =====", nodeName, i, j + 1)
-//				log.Errorf("=====  Status: CPU node: %d & request CPU: %d ; Memory node: %d & request memory: %d =====", node.CpuFree, request.CpuReq, node.MemFree, request.MemReq)
-//
-//				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
-//					log.Errorf("=====  Node %s : with job number %d , scale up by %d failed =====", nodeName, i, j + 1)
-//
-//					stop = true
-//					break
-//				}
-//
-//				if option.KubeShareSupport { // kubeshare/gpu
-//					hasFreeGPU, freeGPUID := false, ""
-//					if request.GpuReq > 0 {
-//						for id, gpu := range node.GpuFree {
-//							if gpu.GPUFreeReq >= request.GpuReq && gpu.GPUFreeMem >= request.GpuMemReq {
-//								hasFreeGPU, freeGPUID = true, id
-//								break
-//							}
-//						}
-//						if !hasFreeGPU {
-//							if node.GpuFreeCount <= 0 {
-//								log.Errorf("=====  Node %s : with job number %d , scale up by %d failed by gpu kubeshare =====", nodeName, i, j + 1)
-//
-//								stop = true
-//								break
-//							} else {
-//								node.GpuFreeCount--
-//								freeGPUID = kubesharev1.NewGPUID(5)
-//								node.GpuFree[freeGPUID] = &cluster.GPUInfo{
-//									GPUFreeReq: 1000,
-//									GPUFreeMem: node.GpuMemTotal,
-//								}
-//							}
-//						}
-//					}
-//
-//					node.CpuFree -= request.CpuReq
-//					node.MemFree -= request.MemReq
-//					if request.GpuReq > 0 {
-//						node.GpuFree[freeGPUID].GPUFreeReq -= request.GpuReq
-//						node.GpuFree[freeGPUID].GPUFreeMem -= request.GpuMemReq
-//					}
-//
-//					if _, ok := scaleUpTarget[job]; !ok {
-//						scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-//					}
-//					if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
-//						(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
-//					}
-//					t := &WorkerResources{
-//						Workers:  map[string]string{},
-//						Critical: false,
-//					}
-//					(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
-//					if request.GpuReq > 0 {
-//						(*t).Workers[cluster.ResourceKubeShareGPU] = freeGPUID
-//					}
-//				} else { // nvidia.com/gpu
-//					if request.GpuReq > 0 {
-//						if node.GpuFreeCount < int(request.GpuReq/1000) {
-//							log.Errorf("=====  Node %s : with job number %d , scale up by %d failed by gpu =====", nodeName, i, j + 1)
-//
-//							stop = true
-//							log.Infof("Break in nvidia.com/gpu request")
-//							break
-//						}
-//					}
-//
-//					node.CpuFree -= request.CpuReq
-//					node.MemFree -= request.MemReq
-//					if request.GpuReq > 0 {
-//						node.GpuFreeCount -= int(request.GpuReq / 1000)
-//					}
-//
-//					if _, ok := scaleUpTarget[job]; !ok {
-//						scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-//					}
-//					if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
-//						(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
-//					}
-//					t := &WorkerResources{
-//						Workers:  map[string]string{},
-//						Critical: false,
-//					}
-//					(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
-//					if request.GpuReq > 0 {
-//						(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
-//					}
-//				}
-//
-//				can = true
-//				log.Errorf("=====  Node %s : with job number %d , scale up by %d success =====", nodeName, i, j + 1)
-//			}
-//			if stop {
-//				break
-//			}
-//		}
-//	}
-//
-//	return
-//}
 
 // SortNodeFromJob sort node priority from job's placement paln,
 // from the least important to the most
