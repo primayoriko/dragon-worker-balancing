@@ -38,21 +38,21 @@ class PrintEvalHook(tf.train.StopAtStepHook):
 
     # def after_create_session(self, session, coord):
     #     super(PrintEvalHook, self).after_create_session(session, coord)
-    #     sys.stdout.flush()
-    #     print("settset")
-    #     print("testsetst 123")
-    #     sys.stdout.flush()
     
     def end(self, session):
         sys.stdout.flush()
         print("end hook")
         print("Time elapsed (global): ", time.time() - start_time)
         print("Time elapsed: ", time.time() - self.start_time)
-        print("Testing Accuracy:",
-                session.run(self.accuracy_step,
-                feed_dict={ x: mnist.test.images,
-                            y: mnist.test.labels,
-                            keep_prob: 1.}))
+        print("Stop session: ", session._closed)
+        if not session._closed:
+            print("Test Accuracy:",
+                    session.run(self.accuracy_step,
+                    feed_dict={ x: mnist.test.images,
+                                y: mnist.test.labels,
+                                keep_prob: 1.}))
+        else:
+            print("session somehow stopped")
         sys.stdout.flush()
         super(PrintEvalHook, self).end(session)
         
@@ -63,20 +63,18 @@ FLAGS = Empty()
 
 # Parameters
 learning_rate = 0.001
-# training_iters = 500000
 batch_size = 16
 display_step = 100
+dropout = 0.75  # Dropout, probability to keep units
 
-# Network Parameters
+# Data Parameters
 n_input = 784  # MNIST data input (img shape: 28*28)
 n_classes = 10  # MNIST total classes (0-9 digits)
-dropout = 0.75  # Dropout, probability to keep units
 
 # tf Graph input
 x = tf.placeholder(tf.float32, [None, n_input])
 y = tf.placeholder(tf.float32, [None, n_classes])
 keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
-
 
 # Create some wrappers for simplicity
 def conv2d(x, W, b, strides=1):
@@ -173,7 +171,9 @@ def main(_):
             accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
             # Initializing the variables
-            hooks=[PrintEvalHook(accuracy, last_step=FLAGS.global_steps)]
+            # hooks = [PrintEvalHook(accuracy), 
+            #         tf.train.StopAtStepHook(last_step=FLAGS.global_steps)]
+            hooks = [PrintEvalHook(accuracy, last_step=FLAGS.global_steps)]
 
             with tf.train.MonitoredTrainingSession(master=server.target,
                                         is_chief=(FLAGS.task_index == 0),
@@ -195,15 +195,14 @@ def main(_):
                                                                         y: batch_ys,
                                                                         keep_prob: 1.})
                         print("Iter " + str(step * batch_size) + ", Minibatch Loss= " +
-                            "{:.6f}".format(loss) + ", Training Accuracy= " +
+                            "{:.6f}".format(loss) + ", Train Accuracy: " +
                             "{:.5f}".format(acc))
                         sys.stdout.flush()
                         # if acc >= 0.95:
                         #     break
                     # step += 1
-
-                print("after session")
-                print("Time elapsed: ", time.time() - start_time)
+                # print("after session")
+                # print("Time elapsed: ", time.time() - start_time)
 
 if __name__ == "__main__":
     TF_CONFIG = ast.literal_eval(os.environ["TF_CONFIG"])
