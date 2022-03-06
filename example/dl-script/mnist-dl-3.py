@@ -38,11 +38,21 @@ learning_rate = 0.001
 training_iters = 500000
 batch_size = 16
 display_step = 100
+# batch_size = mnist.train.num_examples // 3
+# initial_learning_rate = 0.5 
+training_epochs = 10
+n_hidden = 10
+logs_path = "/tmp/mnist/2"
 
 # Network Parameters
 n_input = 784  # MNIST data input (img shape: 28*28)
 n_classes = 10  # MNIST total classes (0-9 digits)
 dropout = 0.75  # Dropout, probability to keep units
+
+# tf Graph input
+# x = tf.placeholder(tf.float32, [None, n_input])
+# y = tf.placeholder(tf.float32, [None, n_classes])
+# keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
 
 # Create some wrappers for simplicity
 def conv2d(x, W, b, strides=1):
@@ -142,6 +152,7 @@ def generate_weights_and_biases_test():
 
 def generate_weights_and_biases():
     # Store layers weight & bias
+    # with tf.name_scope("weights"):
     weights = {
         # 5x5 conv, 1 input, 32 outputs
         'wc1': tf.Variable(tf.random_normal([5, 5, 1, 32])),
@@ -153,6 +164,7 @@ def generate_weights_and_biases():
         'out': tf.Variable(tf.random_normal([1024, n_classes]))
     }
 
+    # with tf.name_scope("biases"):
     biases = {
         'bc1': tf.Variable(tf.random_normal([32])),
         'bc2': tf.Variable(tf.random_normal([64])),
@@ -165,9 +177,6 @@ def generate_weights_and_biases():
 def main(_):
     ps_hosts = FLAGS.ps_hosts.split(",")
     worker_hosts = FLAGS.worker_hosts.split(",")
-
-    print("worker_hosts_init: ", worker_hosts)
-    sys.stdout.flush()
 
     cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
 
@@ -184,74 +193,98 @@ def main(_):
             worker_device="/job:worker/task:%d" % FLAGS.task_index,
             cluster=cluster)):
 
-            # init var
-            init = tf.global_variables_initializer()
-            global_step = tf.train.get_or_create_global_step()
+            # init_op = tf.global_variables_initializer()
+            # summary_op = tf.summary.merge_all()
+            # global_step = tf.train.get_or_create_global_step()
+            global_step = tf.get_variable(
+                'global_step',
+                [],
+                initializer = tf.constant_initializer(0),
+                trainable = False)
 
-            x = tf.placeholder(tf.float32, [None, n_input])
-            y = tf.placeholder(tf.float32, [None, n_classes])
-            keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
+            with tf.name_scope('input'):
+                x = tf.placeholder(tf.float32, [None, n_input])
+                y = tf.placeholder(tf.float32, [None, n_classes])
+                keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
 
-            # Construct model
             weights, biases = generate_weights_and_biases()
             pred = conv_net(x, weights, biases, keep_prob)
             # weights, biases = generate_weights_and_biases_test()
             # pred = conv_net_test(x, weights, biases, keep_prob)
 
-            # Define loss and optimizer
-            cost = tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y)) # loss (?) 
-            optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost, global_step=global_step) # train_op
+            with tf.name_scope('cross_entropy'):
+                cross_entropy = tf.reduce_mean(
+                    tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y)) # cost, loss
+            
+            with tf.name_scope('train'):
+                # grad_op = tf.train.GradientDescentOptimizer(learning_rate)
+                grad_op = tf.train.AdamOptimizer(learning_rate=learning_rate)
+                train_op = grad_op.minimize(cross_entropy, global_step=global_step) # train_op
 
-            # Evaluate model
-            correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
-            accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+            with tf.name_scope('accuracy'):
+                correct_pred = tf.equal(tf.argmax(pred, 1), tf.argmax(y, 1))
+                accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+            
+            tf.summary.scalar("cost", cross_entropy)
+            tf.summary.scalar("accuracy", accuracy)
 
-            # Initializing the variables
-            hooks = [tf.train.StopAtStepHook(last_step=FLAGS.global_steps+ 50 * len(worker_hosts))]
+            summary_op = tf.summary.merge_all()
+            init_op = tf.global_variables_initializer()
+
             is_chief = (FLAGS.task_index == 0)
 
-            with tf.train.MonitoredTrainingSession(master=server.target,
-                                        is_chief=is_chief,
-                                        config=tf.ConfigProto(
-                                            device_filters=["/job:ps", "/job:worker/task:%d" % FLAGS.task_index]
-                                        ),
-                                        hooks=hooks) as sess:
-                # step = 0
-                time1 = time.time()
-                sess.run(init)
-                flg = True
+            writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
+            sv = tf.train.Supervisor(
+                is_chief=is_chief, global_step=global_step, init_op=init_op)
 
-                while not sess.should_stop():
-                    batch_xs, batch_ys = mnist.train.next_batch(batch_size)
-                    _, step = sess.run([optimizer, global_step], feed_dict={x: batch_xs, y: batch_ys,
-                                                keep_prob: dropout})
-                    if step % display_step == 0 and not sess.should_stop():
-                        # Calculate batch loss and accuracy
-                        loss, acc = sess.run([cost, accuracy], feed_dict={x: batch_xs,
-                                                                        y: batch_ys,
-                                                                        keep_prob: 1.})
-                        print("Step num: ", step)
-                        sys.stdout.flush()
-                        print("Iter " + str(step * batch_size) + ", Minibatch Loss= " +
-                            "{:.6f}".format(loss) + ", Training Accuracy= " +
-                            "{:.5f}".format(acc))
-                        sys.stdout.flush()
-                        print("worker_hosts: ", worker_hosts)
-                        sys.stdout.flush()
+            with sv.prepare_or_wait_for_session(server.target) as sess:
+                start_time = time.time()
 
-                    if step > FLAGS.global_steps:
-                        time2 = time.time()
-                        print("Time elapsed: ", time2 - time1)
-                        sys.stdout.flush()
-                        if flg and not sess.should_stop():
-                            print("Testing Accuracy:",
-                                sess.run(accuracy,
-                                        feed_dict={x: mnist.test.images,
-                                                    y: mnist.test.labels,
-                                                    keep_prob: 1.}))
+                for epoch in range(training_epochs):
+
+                    batch_count = int(mnist.train.num_examples / batch_size)
+                    count = 0
+
+                    for i in range(batch_count):
+                        batch_x, batch_y = mnist.train.next_batch(batch_size)
+                        
+                        _, step = sess.run([train_op,  global_step], 
+                                            feed_dict={x: batch_x, y: batch_y, keep_prob: dropout})
+                        writer.add_summary(summary, step)
+                        
+                        # if step % display_step == 0:
+                        #     # Calculate batch loss and accuracy
+                        #     loss, acc, summary = sess.run([cross_entropy, accuracy, summary_op], feed_dict={x: batch_x,
+                        #                                                     y: batch_y,
+                        #                                                     keep_prob: 1.})
+                        #     writer.add_summary(summary, step)
+                        #     print("Step num: ", step)
+                        #     sys.stdout.flush()
+                        #     print("Iter " + str(step * batch_size) + ", Minibatch Loss= " +
+                        #         "{:.6f}".format(loss) + ", Training Accuracy= " +
+                        #         "{:.5f}".format(acc))
+                        #     sys.stdout.flush()
+
+                        count += 1
+                        if count % display_step == 0 or i + 1 == batch_count:
+                            elapsed_time = time.time() - start_time
+                            loss, acc, summary = sess.run([cross_entropy, accuracy, summary_op], feed_dict={x: batch_x,
+                                                                            y: batch_y,
+                                                                            keep_prob: 1.})
+                            print("Step: %d," % (step + 1), 
+                                        " Epoch: %2d," % (epoch + 1), 
+                                        " Batch: %3d of %3d," % (i + 1, batch_count), 
+                                        " Train Acc: %.4f," % acc, 
+                                        " Train Loss: %.4f," % loss, 
+                                        " AvgTime: %3.2fms" % float(elapsed_time * 1000 / display_step))
                             sys.stdout.flush()
-                            flg = False
+                            writer.add_summary(summary, step)
+                            count = 0
+                            start_time = time.time()
+                
+                print("Total Train Time: %3.2fs" % float(time.time() - start_time))
+                print("Test Accuracy: %2.2f" % sess.run(accuracy, feed_dict={x: mnist.test.images, y: mnist.test.labels}))
+                print("Final Loss: %.4f" % loss)
 
 if __name__ == "__main__":
     TF_CONFIG = ast.literal_eval(os.environ["TF_CONFIG"])
