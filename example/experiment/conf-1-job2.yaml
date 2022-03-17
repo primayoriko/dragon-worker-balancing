@@ -24,8 +24,8 @@ spec:
             resources:
               # limits:
               requests:
-                cpu: "1000m"
-                memory: "1Gi"
+                cpu: "500m"
+                memory: "0.5Gi"
     Worker:
       replicas: 1
       restartPolicy: OnFailure
@@ -45,5 +45,5 @@ spec:
             resources:
               # limits:
               requests:
-                cpu: "1000m"
+                cpu: "500m"
                 memory: "1Gi"
