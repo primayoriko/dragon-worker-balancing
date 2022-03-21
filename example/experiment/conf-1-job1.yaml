@@ -5,8 +5,8 @@ metadata:
 spec:
   min-instances: 1
   max-instances: 4
-  # cleanPodPolicy: "All"
-  cleanPodPolicy: "None"
+  cleanPodPolicy: "All"
+  # cleanPodPolicy: "None"
   tfReplicaSpecs:
     PS:
       replicas: 1
@@ -25,7 +25,7 @@ spec:
               # limits:
               requests:
                 cpu: "500m"
-                memory: "0.5Gi"
+                memory: "0.6Gi"
     Worker:
       replicas: 1
       restartPolicy: OnFailure
@@ -42,7 +42,7 @@ spec:
             - name: "tfjob_id"
               value: "job1"
             - name: "global_steps"
-              value: "5000"
+              value: "10000"
             ports:
             - containerPort: 2222
               name: tfjob-port

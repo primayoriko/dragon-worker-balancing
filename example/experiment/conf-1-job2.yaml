@@ -25,7 +25,7 @@ spec:
               # limits:
               requests:
                 cpu: "500m"
-                memory: "0.5Gi"
+                memory: "0.6Gi"
     Worker:
       replicas: 1
       restartPolicy: OnFailure
@@ -42,7 +42,7 @@ spec:
             - name: "tfjob_id"
               value: "job2"
             - name: "global_steps"
-              value: "5000"
+              value: "10000"
             ports:
             - containerPort: 2222
               name: tfjob-port
