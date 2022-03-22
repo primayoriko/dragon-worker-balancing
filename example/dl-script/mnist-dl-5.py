@@ -164,6 +164,13 @@ def generate_weights_and_biases():
 
     return ( weights, biases )
 
+def send_message(payload, link=FLAGS.webhook_link):
+    conn = http.client.HTTPSConnection(link)
+    conn.request("POST", "/", payload, 
+        {'Content-Type': 'application/json'})
+    time.sleep(2)
+    conn.close()
+
 def main(_):
     begin_time = time.time()
 
@@ -270,13 +277,10 @@ def main(_):
                             })
                             print(payload)
                             sys.stdout.flush()
-                            conn = http.client.HTTPSConnection(FLAGS.webhook_link)
-                            conn.request("POST", "/", payload, 
-                                {'Content-Type': 'application/json'})
-                            time.sleep(2)
-                            conn.close()
-                            print("finished time")
-                            sys.stdout.flush()
+                            if is_chief:
+                                send_message(payload)
+                            # print("finished time")
+                            # sys.stdout.flush()
 
                         if flg2 and not sess.should_stop():
                             acc = sess.run(accuracy,
@@ -292,13 +296,17 @@ def main(_):
                             })
                             print(payload)
                             sys.stdout.flush()
-                            conn = http.client.HTTPSConnection(FLAGS.webhook_link)
-                            conn.request("POST", "/", payload, 
-                                {'Content-Type': 'application/json'})
-                            time.sleep(2)
-                            conn.close()
-                            print("finished acc")
-                            sys.stdout.flush()
+                            if is_chief:
+                                send_message(payload)
+                                message = "time diff: {} s".format(time.time() - start_time)
+                                payload = str({
+                                    "sender": FLAGS.job_id,
+                                    "worker_index": FLAGS.task_index,
+                                    "message": message
+                                })
+                                send_message(payload)
+                            # print("finished acc")
+                            # sys.stdout.flush()
 
 if __name__ == "__main__":
     TF_CONFIG = ast.literal_eval(os.environ["TF_CONFIG"])

@@ -4,7 +4,7 @@ metadata:
   name: job2
 spec:
   min-instances: 1
-  max-instances: 4
+  max-instances: 3
   cleanPodPolicy: "All"
   # cleanPodPolicy: "None"
   tfReplicaSpecs:
