@@ -37,9 +37,9 @@ FLAGS = Empty()
 
 # Parameters
 learning_rate = 0.001
-training_iters = 500000
+# training_iters = 500000
 batch_size = 16
-display_step = 100
+display_step = 1000
 
 # Network Parameters
 n_input = 784  # MNIST data input (img shape: 28*28)
@@ -164,7 +164,7 @@ def generate_weights_and_biases():
 
     return ( weights, biases )
 
-def send_message(payload, link=FLAGS.webhook_link):
+def send_message(payload, link):
     conn = http.client.HTTPSConnection(link)
     conn.request("POST", "/", payload, 
         {'Content-Type': 'application/json'})
@@ -278,7 +278,7 @@ def main(_):
                             print(payload)
                             sys.stdout.flush()
                             if is_chief:
-                                send_message(payload)
+                                send_message(payload, FLAGS.webhook_link)
                             # print("finished time")
                             # sys.stdout.flush()
 
@@ -297,14 +297,14 @@ def main(_):
                             print(payload)
                             sys.stdout.flush()
                             if is_chief:
-                                send_message(payload)
+                                send_message(payload, FLAGS.webhook_link)
                                 message = "time diff: {} s".format(time.time() - start_time)
                                 payload = str({
                                     "sender": FLAGS.job_id,
                                     "worker_index": FLAGS.task_index,
                                     "message": message
                                 })
-                                send_message(payload)
+                                send_message(payload, FLAGS.webhook_link)
                             # print("finished acc")
                             # sys.stdout.flush()
 
