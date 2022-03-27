@@ -36,6 +36,8 @@ class Empty:
 
 FLAGS = Empty()
 
+inf_time_in_seconds = 1000000 
+
 # Parameters
 learning_rate = 0.001
 # training_iters = 500000
@@ -195,20 +197,20 @@ def main(_):
         server = tf.train.Server(cluster,
                                 job_name=FLAGS.job_name,
                                 task_index=FLAGS.task_index)
-    except tf.python.framework.errors_impl.InvalidArgumentError as e:
+    # except tf.python.framework.errors_impl.InvalidArgumentError as e:
+    except tf.errors.InvalidArgumentError as e:
         print("predicted")
         sys.stdout.flush()
         print(str(e))
         sys.stdout.flush()
-        send_message(str(e))
-        sys.exit(0)
+        time.sleep(inf_time_in_seconds)
     except Exception as e:
         print("predicted, but false type: ", type(e))
         sys.stdout.flush()
         print(str(e))
         sys.stdout.flush()
         send_message(str(e))
-        sys.exit(0)
+        time.sleep(inf_time_in_seconds)
 
     if FLAGS.job_name == "ps":
         server.join()
