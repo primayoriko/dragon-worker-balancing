@@ -5,6 +5,7 @@ metadata:
 spec:
   min-instances: 1
   max-instances: 4
+  ttlSecondsAfterFinished: 2
   cleanPodPolicy: "All"
   # cleanPodPolicy: "None"
   tfReplicaSpecs:
