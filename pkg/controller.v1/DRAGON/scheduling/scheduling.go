@@ -366,8 +366,10 @@ func SchedulingAlgorithm(
 	} else if now := metav1.Now(); len(*waitingQueue) > 0 {
 		// Job that waiting over 1 min first
 		// jobs in waitingQueue, the older the more front
-		if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
-			// TODO: need to find out,  is this only by worker pod or all pod (including PS pod)
+		waitingTime := now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds()
+		if waitingTime >= 30.0 {
+			log.Infof("************** PRIME: there is job waiting more than threshold time [%f]", waitingTime)
+			// TODO: need to find out, is this only by worker pod or all pod (including PS pod)
 			highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
 			// highPriorityTrainingJob = (*waitingQueue)[0]
 		}
@@ -376,12 +378,16 @@ func SchedulingAlgorithm(
 	var scaleDownFlag bool = false
 
 	if highPriorityJob != nil {
+		log.Infof("************** PRIME: high priority job found, try to scaledown")
 		ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
 		if ok {
+			log.Infof("************** PRIME: scaledown success")
 			scaleDownFlag = true
 			for job, plan := range scaleDownPlan {
 				job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
 			}
+		} else {
+			log.Infof("************** PRIME: scaledown failed")
 		}
 		lastActionTime = metav1.Now()
 	}
@@ -393,9 +399,9 @@ func SchedulingAlgorithm(
 	 * If no high priority job, or there is scale down that going to be performed,
 	 * select a job can be scheduled from waiting queue.
 	 */
-
 	if highPriorityJob == nil || scaleDownFlag {
 		if pendingResource != nil {
+			log.Infof("************** PRIME: there is job waiting more than threshold time [%f]", waitingTime)
 			ok, placementPlans := ScheduleJob(
 				&([]*cluster.PodRequests{
 					highPriorityJob,
@@ -446,7 +452,9 @@ func SchedulingAlgorithm(
 				log.Infof("No resource for SharePod %s/%s", pendingSharePod.Namespace, pendingSharePod.Name)
 			}
 		} else {
+			i := 0
 			for _, job := range *waitingQueue {
+				log.Infof("************** PRIME: schedule job [%d] in waiting queue", i)
 				ok, placementPlans := ScheduleJob(
 					&([]*cluster.PodRequests{
 						job.GetPodRequests(tfv1.TFReplicaTypePS),
@@ -454,16 +462,37 @@ func SchedulingAlgorithm(
 					}),
 					nodeRes,
 				)
-				// log.Infof("************** ERICYEH: OK NUM: %d", ok)
-				// log.Infof("************** ERICYEH: gpu: %d", job.ReplicaRequest[tfv1.TFReplicaTypeWorker].GpuReq)
+
+				log.Infof("************** ERICYEH: OK NUM: %d", ok)
+				req := [2]int {
+					int(*job.Spec.TFReplicaSpecs[tfv1.TFReplicaTypePS].Replicas),
+					int(*job.Spec.MinInstances),
+				}
+				log.Infof("************** PRIMA: needed ok: %d", req)
+				log.Infof("************** ERICYEH: gpu: %d", job.ReplicaRequest[tfv1.TFReplicaTypeWorker].GpuReq)
 				if ok[0] >= int(*job.Spec.TFReplicaSpecs[tfv1.TFReplicaTypePS].Replicas) && ok[1] >= int(*job.Spec.MinInstances) {
+					log.Infof("************** PRIME: job [%d] in waiting queue can be scheduled", i)
+
 					job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] = (*placementPlans)[0]
-					job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = (*placementPlans)[1]
 					for _, plan := range *job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] {
 						for _, worker := range *plan {
 							worker.Critical = true
 						}
 					}
+
+					job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = (*placementPlans)[1]
+					// TODO: uncomment if want to make 1st worker critical
+					//flg := false
+					//for _, plan := range *job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] {
+					//	for _, worker := range *plan {
+					//		worker.Critical = true
+					//		flg = true
+					//		break
+					//	}
+					//	if flg {
+					//		break
+					//	}
+					//}
 
 					waitingQueue.Remove(job)
 					runningQueue.Add(job)
@@ -473,6 +502,8 @@ func SchedulingAlgorithm(
 					lastActionTime = metav1.Now()
 					break
 				}
+				log.Infof("************** PRIME: job [%d] can't be scheduled", i)
+				i += 1
 			}
 		}
 	}
