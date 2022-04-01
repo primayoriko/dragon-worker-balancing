@@ -929,14 +929,14 @@ func ScaleDownMod(highPriorityJobs *[]*cluster.PodRequests, runningQueue JobQueu
 			canBeScaledNum++
 		}
 
-		scaleLogStr := "cannot be scaled"
+		scaleLogStr := "cannot be scaled down"
 		if canBeScaledJobs[i] {
-			scaleLogStr = "can be scaled"
+			scaleLogStr = "can be scaled down"
 		}
 		log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
 	}
 
-	log.Infof("======== ScaleDown initially has %d jobs can be scaled up =======", canBeScaledNum)
+	log.Infof("======== ScaleDown initially has %d jobs can be scaled down =======", canBeScaledNum)
 
 	k := 0
 	for range *highPriorityJobs {
@@ -1469,9 +1469,9 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 			canBeScaledNum++
 		}
 
-		scaleLogStr := "cannot be scaled"
+		scaleLogStr := "cannot be scaled up"
 		if canBeScaledJobs[i] {
-			scaleLogStr = "can be scaled"
+			scaleLogStr = "can be scaled up"
 		}
 		log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
 	}
