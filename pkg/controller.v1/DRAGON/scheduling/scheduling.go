@@ -322,8 +322,8 @@ func SchedulingAlgorithm(
 	highPrioritySharePodsQueueMutex *sync.Mutex,
 	nodeRes cluster.NodeResources,
 ) {
-	log.Errorf("================ Scheduling Algo Enter ===================")
-	defer log.Errorf("================ Scheduling Algo Exit ===================")
+	log.Infof("================ Scheduling Algo Enter ===================")
+	defer log.Infof("================ Scheduling Algo Exit ===================")
 
 	// check if high priority job exists
 	var pendingResource *cluster.PodRequest = nil
@@ -355,7 +355,7 @@ func SchedulingAlgorithm(
 	 * ScaleDown is only called if high priority job exists.
 	 */
 
-	log.Errorf("================ Scheduling Algo P1 Enter ===================")
+	log.Infof("================ Scheduling Algo P1 Enter ===================")
 
 	//var highPriorityJob *cluster.PodRequests = nil
 	var highPriorityJob *[]*cluster.PodRequests = nil
@@ -380,7 +380,8 @@ func SchedulingAlgorithm(
 				(*waitingQueue)[0].GetPodRequests(tfv1.TFReplicaTypePS),
 				(*waitingQueue)[0].GetPodRequests(tfv1.TFReplicaTypeWorker),
 			})
-			neededWorkerNum = len(*((*highPriorityJob)[1]))
+			//neededWorkerNum = len(*((*highPriorityJob)[1]))
+			neededWorkerNum = int(*((*waitingQueue)[0].Spec.MinInstances))
 			log.Infof("************** PRIME: there is job waiting more than threshold time [%f] that need %d to be scheduled",
 				waitingTime, neededWorkerNum)
 			// highPriorityTrainingJob = (*waitingQueue)[0]
@@ -405,7 +406,7 @@ func SchedulingAlgorithm(
 		lastActionTime = metav1.Now()
 	}
 
-	log.Errorf("================ Scheduling Algo P2 Enter ===================")
+	log.Infof("================ Scheduling Algo P2 Enter ===================")
 
 	/*
 	 * Scheduling Phase 2
@@ -422,6 +423,7 @@ func SchedulingAlgorithm(
 			if flg {
 				var nodeName string
 				var worker *WorkerResources
+				// TODO: Modify this (?)
 				for n, p := range *(*placementPlans)[0] {
 					nodeName = n
 					for _, w := range *p {
@@ -464,17 +466,17 @@ func SchedulingAlgorithm(
 			} else {
 				log.Infof("No resource for SharePod %s/%s", pendingSharePod.Namespace, pendingSharePod.Name)
 			}
-		} else {
+		//} else if highPriorityJob == nil {
+		} else { // if no high priority job only (?), nvm but double check the one in front
 			i := 0
 			for _, job := range *waitingQueue {
-				log.Infof("************** PRIME: schedule job [%d] in waiting queue", i)
-				ok, placementPlans := ScheduleJob(
-					&([]*cluster.PodRequests{
-						job.GetPodRequests(tfv1.TFReplicaTypePS),
-						job.GetPodRequests(tfv1.TFReplicaTypeWorker),
-					}),
-					nodeRes,
-				)
+				request := &([]*cluster.PodRequests{
+					job.GetPodRequests(tfv1.TFReplicaTypePS),
+					job.GetPodRequests(tfv1.TFReplicaTypeWorker),
+				})
+				log.Infof("************** PRIME: schedule job [%d] in waiting queue with %d ps and %d worker",
+					i, len(*((*request)[0])), len(*((*request)[1])))
+				ok, placementPlans := ScheduleJob(request, nodeRes)
 
 				log.Infof("************** ERICYEH: OK NUM: %d", ok)
 				req := [2]int {
@@ -521,7 +523,7 @@ func SchedulingAlgorithm(
 		}
 	}
 
-	log.Errorf("================ Scheduling Algo P3 Enter ===================")
+	log.Infof("================ Scheduling Algo P3 Enter ===================")
 
 	/*
 	 * Scheduling Phase 3
@@ -573,12 +575,16 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 
 		stop := false
 		oneNodeOk := true
+		i := -1
 		for groupIdx, requests := range *requestsGroups {
+			i++
+			j := -1
 			for _, request := range *requests {
+				j++
 				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
 					oneNodeOk = false
 					stop = true
-					log.Infof("Break in cpu or mem request")
+					log.Infof("**** Break in cpu or mem request in request group [%d] and pod/worker num %d", i, j)
 					break
 				}
 
@@ -647,7 +653,7 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 					if request.GpuReq > 0 {
 						(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
 					}
-					// log.Infof("*****************ERICYEH 1*********************: %d, %v", request.GpuReq, t.Workers)
+					log.Infof("*****************ERICYEH 1*********************: %d, %v", request.GpuReq, t.Workers)
 				}
 			}
 			if stop {
@@ -666,27 +672,30 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 			return
 		}
 
-		tmpNum := func() (max int) {
-			tmp := make([]int, groupNum)
-			for groupIdx, val := range tmps {
-				tmp[groupIdx] += len(*val)
+		tmp := make([]int, groupNum)
+		for groupIdx, val := range tmps {
+			tmp[groupIdx] += len(*val)
+		}
+		max := 0
+		for _, val := range tmp {
+			if val > max {
+				max = val
 			}
-			max = 0
-			for _, val := range tmp {
-				if val > max {
-					max = val
-				}
-			}
-			return
-		}()
-		if tmpNum > maxSlot {
-			maxSlot, maxSlotNode = tmpNum, nodeName
+		}
+		//tmpNum := func() (max int) {
+		//	return
+		//}()
+
+		if max > maxSlot {
+			maxSlot, maxSlotNode = max, nodeName
 		}
 	}
 
 	if maxSlot == 0 {
 		return
 	}
+
+	log.Infof("******** PRIME: Cant allocated in one node, maxslot node name: %s with capacity %d", maxSlotNode, maxSlot)
 
 	// worker cross node
 	nodeRes = *constNodeRes.DeepCopy()
@@ -788,7 +797,10 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 		}
 		for groupIdx, tmp := range tmps {
 			if len(*tmp) > 0 {
+				log.Infof("****** PRIME: request [%d] can be placed in node %s with %d pods", groupIdx, nodeName, len(*tmp))
 				(*placementPlans[groupIdx])[nodeName] = tmp
+			} else {
+				log.Infof("****** PRIME: request [%d] can't be placed in node %s", groupIdx, nodeName)
 			}
 		}
 	}
