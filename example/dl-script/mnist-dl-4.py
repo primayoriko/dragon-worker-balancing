@@ -10,13 +10,16 @@ Adapted from
 
 MNIST source: (http://yann.lecun.com/exdb/mnist/)
 '''
-
 from __future__ import print_function
-import argparse
+
+# import argparse
 import ast
+import datetime
 import os
 import sys
 import time
+
+import http.client
 
 import tensorflow as tf
 
@@ -33,11 +36,13 @@ class Empty:
 
 FLAGS = Empty()
 
+inf_time_in_seconds = 1000000 
+
 # Parameters
 learning_rate = 0.001
-training_iters = 500000
+# training_iters = 500000
 batch_size = 16
-display_step = 100
+display_step = 1000
 
 # Network Parameters
 n_input = 784  # MNIST data input (img shape: 28*28)
@@ -162,24 +167,60 @@ def generate_weights_and_biases():
 
     return ( weights, biases )
 
+def send_message(message):
+    payload = str({
+            "sender": FLAGS.job_id,
+            "worker_index": FLAGS.task_index,
+            "message": message
+        })
+    conn = http.client.HTTPSConnection(FLAGS.webhook_link)
+    conn.request("POST", "/", payload, 
+        {'Content-Type': 'application/json'})
+    time.sleep(2)
+    conn.close()
+
+def send_initial_timestamp():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    message = "job started at {}".format(timestamp)
+    send_message(message)
+
 def main(_):
+    begin_time = time.time()
+
     ps_hosts = FLAGS.ps_hosts.split(",")
     worker_hosts = FLAGS.worker_hosts.split(",")
 
-    print("worker_hosts_init: ", worker_hosts)
-    sys.stdout.flush()
-
     cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
 
-    # Create and start a server for the local task.
-    server = tf.train.Server(cluster,
-                            job_name=FLAGS.job_name,
-                            task_index=FLAGS.task_index)
+    try:
+        # Create and start a server for the local task.
+        server = tf.train.Server(cluster,
+                                job_name=FLAGS.job_name,
+                                task_index=FLAGS.task_index)
+    # except tf.python.framework.errors_impl.InvalidArgumentError as e:
+    except tf.errors.InvalidArgumentError as e:
+        print("predicted")
+        sys.stdout.flush()
+        print(str(e))
+        sys.stdout.flush()
+        time.sleep(inf_time_in_seconds)
+    except Exception as e:
+        print("predicted, but false type: ", type(e))
+        sys.stdout.flush()
+        print(str(e))
+        sys.stdout.flush()
+        send_message(str(e))
+        time.sleep(inf_time_in_seconds)
 
     if FLAGS.job_name == "ps":
         server.join()
 
     elif FLAGS.job_name == "worker":
+        is_chief = (FLAGS.task_index == 0)
+
+        if is_chief:
+            send_initial_timestamp()
+
         with tf.device(tf.train.replica_device_setter(
             worker_device="/job:worker/task:%d" % FLAGS.task_index,
             cluster=cluster)):
@@ -209,7 +250,6 @@ def main(_):
 
             # Initializing the variables
             hooks = [tf.train.StopAtStepHook(last_step=FLAGS.global_steps+ 50 * len(worker_hosts))]
-            is_chief = (FLAGS.task_index == 0)
 
             with tf.train.MonitoredTrainingSession(master=server.target,
                                         is_chief=is_chief,
@@ -217,17 +257,32 @@ def main(_):
                                             device_filters=["/job:ps", "/job:worker/task:%d" % FLAGS.task_index]
                                         ),
                                         hooks=hooks) as sess:
-                # step = 0
-                time1 = time.time()
+
+                print("tf_config:", os.environ["TF_CONFIG"])
+                sys.stdout.flush()
+
+                print("webhook_link:", FLAGS.webhook_link)
+                sys.stdout.flush()
+
+                print("job_id:", FLAGS.job_id)
+                sys.stdout.flush()
+
+                print("job_name:", FLAGS.job_name)
+                sys.stdout.flush()
+
+                print("worker_hosts_init:", worker_hosts)
+                sys.stdout.flush()
+
                 sess.run(init)
+
                 flg1, flg2 = (True, True)
+                start_time = time.time()
 
                 while not sess.should_stop():
                     batch_xs, batch_ys = mnist.train.next_batch(batch_size)
                     _, step = sess.run([optimizer, global_step], feed_dict={x: batch_xs, y: batch_ys,
                                                 keep_prob: dropout})
                     if step % display_step == 0 and not sess.should_stop():
-                        # Calculate batch loss and accuracy
                         loss, acc = sess.run([cost, accuracy], feed_dict={x: batch_xs,
                                                                         y: batch_ys,
                                                                         keep_prob: 1.})
@@ -237,29 +292,47 @@ def main(_):
                             "{:.6f}".format(loss) + ", Training Accuracy= " +
                             "{:.5f}".format(acc))
                         sys.stdout.flush()
-                        print("worker_hosts: ", worker_hosts)
-                        sys.stdout.flush()
 
                     if step > FLAGS.global_steps:
                         if flg1:
-                            time2 = time.time()
-                            print("Time elapsed: ", time2 - time1)
-                            sys.stdout.flush()
+                            end_time = time.time()
                             flg1 = False
+                            message = "Net time elapsed: {} s | Gross time elapsed: {} s".format(
+                                end_time - start_time, end_time - begin_time)
+                            print(message)
+                            sys.stdout.flush()
+                            if is_chief:
+                                send_message(message)
+
                         if flg2 and not sess.should_stop():
-                            print("Testing Accuracy:",
-                                sess.run(accuracy,
+                            acc = sess.run(accuracy,
                                         feed_dict={x: mnist.test.images,
                                                     y: mnist.test.labels,
-                                                    keep_prob: 1.}))
-                            sys.stdout.flush()
+                                                    keep_prob: 1.})
                             flg2 = False
+                            message = "Testing Accuracy: {} %".format(acc * 100)
+                            print(message)
+                            sys.stdout.flush()
+                            if is_chief:
+                                send_message(message)
+                                # send_message(payload, FLAGS.webhook_link)
+                                # message = "time diff: {} s".format(time.time() - start_time)
 
 if __name__ == "__main__":
     TF_CONFIG = ast.literal_eval(os.environ["TF_CONFIG"])
+    
+    FLAGS.webhook_link = str(os.environ["webhook_link"]) if "webhook_link" in os.environ else "UNKNOWN"
+    FLAGS.job_id = str(os.environ["tfjob_id"]) if "tfjob_id" in os.environ else "UNKNOWN"
     FLAGS.job_name = TF_CONFIG["task"]["type"]
     FLAGS.task_index = TF_CONFIG["task"]["index"]
     FLAGS.ps_hosts = ",".join(TF_CONFIG["cluster"]["ps"])
     FLAGS.worker_hosts = ",".join(TF_CONFIG["cluster"]["worker"])
     FLAGS.global_steps = int(os.environ["global_steps"]) if "global_steps" in os.environ else 10000
+    
+    # try:
+    #     tf.app.run(main=main, argv=[sys.argv[0]])
+    # except Exception as e:
+    #     print(e)
+    #     sys.stdout.flush()
+    #     sys.exit(0)
     tf.app.run(main=main, argv=[sys.argv[0]])
