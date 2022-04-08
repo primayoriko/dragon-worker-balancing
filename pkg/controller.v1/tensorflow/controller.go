@@ -332,6 +332,8 @@ func (tc *TFController) processNextWorkItem() bool {
 		utilruntime.HandleError(fmt.Errorf("error syncing tfjob: %v", err))
 		tc.WorkQueue.AddRateLimited(key)
 	} else {
+		//log.Infof("===== processNextWorkItem being run at [%f] =============",
+		//	metav1.Now().Sub(scheduling.BaseTime.Time).Seconds())
 		err := tc.reconcileTFJobs(nil)
 		if err != nil {
 			tc.WorkQueue.AddRateLimited(key)
@@ -410,6 +412,8 @@ func (tc *TFController) syncTFJob(key string) (bool, error) {
 
 	var reconcileTFJobsErr error
 	if tfjobNeedsSync && tfjob.DeletionTimestamp == nil {
+		//log.Infof("===== syncTFJob being run at [%f] =============",
+		//	metav1.Now().Sub(scheduling.BaseTime.Time).Seconds())
 		reconcileTFJobsErr = tc.reconcileTFJobs(tfjob)
 	}
 
@@ -425,6 +429,8 @@ func (tc *TFController) syncTFJob(key string) (bool, error) {
 func (tc *TFController) reconcileTFJobs(tfjob *tfv1.TFJob) error {
 
 	/*************** Enqueue ***************/
+	//log.Infof("===== ReconcileTFJob being run at [%f] =============",
+	//	metav1.Now().Sub(scheduling.BaseTime.Time).Seconds())
 
 	if tfjob != nil {
 
