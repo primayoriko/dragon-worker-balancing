@@ -30,6 +30,7 @@ var (
 	kubeshareClientSet kubeshareclientset.Interface
 	lastActionTime     metav1.Time = metav1.Now()
 	option             *options.ServerOption
+	//BaseTime     	   metav1.Time = metav1.Now()
 )
 
 func InitClientSets(itk kubeclientset.Interface, itt tfjobclientset.Interface, itm kubeshareclientset.Interface, op *options.ServerOption) {
@@ -322,8 +323,8 @@ func SchedulingAlgorithm(
 	highPrioritySharePodsQueueMutex *sync.Mutex,
 	nodeRes cluster.NodeResources,
 ) {
-	log.Errorf("================ Scheduling Algo Enter ===================")
-	defer log.Errorf("================ Scheduling Algo Exit ===================")
+	log.Infof("================ Scheduling Algo Enter ===================")
+	defer log.Infof("================ Scheduling Algo Exit ===================")
 
 	// check if high priority job exists
 	var pendingResource *cluster.PodRequest = nil
@@ -354,58 +355,74 @@ func SchedulingAlgorithm(
 	 * If there is high priority job, try to schedule it through scale down.
 	 * ScaleDown is only called if high priority job exists.
 	 */
+	log.Infof("================ Scheduling Algo P1 Enter ===================")
 
-	log.Errorf("================ Scheduling Algo P1 Enter ===================")
-
-	var highPriorityJob *cluster.PodRequests = nil
+	//var highPriorityJob *cluster.PodRequests = nil
+	var highPriorityJob *[]*cluster.PodRequests = nil
+	var neededWorkerNum = 0
 	// var highPriorityTrainingJob *TrainingJob = nil
 
 	// High priority job first
 	if pendingResource != nil {
-		highPriorityJob = &cluster.PodRequests{pendingResource}
+		highPriorityJob = &([]*cluster.PodRequests {
+			{ pendingResource },
+		})
 	} else if now := metav1.Now(); len(*waitingQueue) > 0 {
 		// Job that waiting over 1 min first
 		// jobs in waitingQueue, the older the more front
-		if now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds() >= 30.0 {
-			// TODO: need to find out,  is this only by worker pod or all pod (including PS pod)
-			highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
+		waitingTime := now.Sub((*waitingQueue)[0].Status.EnqueueTime.Time).Seconds()
+		if waitingTime >= 30.0 {
+			log.Infof("************** PRIME: there is job waiting more than threshold time [%f]", waitingTime)
+			// TODO: need to find out, is this only by worker pod or all pod (including PS pod)
+			//highPriorityJob = (*waitingQueue)[0].GetMinInstanceWorkerPodRequests()
+			highPriorityJob = &([]*cluster.PodRequests{
+				(*waitingQueue)[0].GetPodRequests(tfv1.TFReplicaTypePS),
+				(*waitingQueue)[0].GetPodRequests(tfv1.TFReplicaTypeWorker),
+			})
+			//neededWorkerNum = len(*((*highPriorityJob)[1]))
+			neededWorkerNum = int(*((*waitingQueue)[0].Spec.MinInstances))
+			log.Infof("************** PRIME: there is job waiting more than threshold time [%f] that need %d to be scheduled",
+				waitingTime, neededWorkerNum)
 			// highPriorityTrainingJob = (*waitingQueue)[0]
 		}
 	}
 
-	var scaleDownFlag bool = false
+	var scaleDownFlag = false
 
 	if highPriorityJob != nil {
-		ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
+		log.Infof("************** PRIME: high priority job found, try to scaledown")
+		//ok, scaleDownPlan, _ := ScaleDown(highPriorityJob, *runningQueue, nodeRes)
+		ok, scaleDownPlan, _ := ScaleDownMod(highPriorityJob, *runningQueue, nodeRes)
 		if ok {
+			log.Infof("************** PRIME: scaledown success ******")
 			scaleDownFlag = true
 			for job, plan := range scaleDownPlan {
 				job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = plan
 			}
+		} else {
+			log.Infof("************** PRIME: scaledown failed ******")
 		}
 		lastActionTime = metav1.Now()
 	}
 
-	log.Errorf("================ Scheduling Algo P2 Enter ===================")
+	log.Infof("================ Scheduling Algo P2 Enter ===================")
 
 	/*
 	 * Scheduling Phase 2
 	 * If no high priority job, or there is scale down that going to be performed,
 	 * select a job can be scheduled from waiting queue.
 	 */
-
 	if highPriorityJob == nil || scaleDownFlag {
 		if pendingResource != nil {
-			ok, placementPlans := ScheduleJob(
-				&([]*cluster.PodRequests{
-					highPriorityJob,
-				}),
-				nodeRes,
-			)
+			log.Infof("************** PRIME: there is job waiting more than threshold time [%f]")
+			ok, placementPlans := ScheduleJob(highPriorityJob, nodeRes)
 			// If high priority job can be scheduled, schedule it here... LOL
-			if ok[0] >= 1 {
+			flg := highPriorityJob != nil && ok[0] >= 1 &&
+				(len(*highPriorityJob) == 1 || ok[1] >= neededWorkerNum)
+			if flg {
 				var nodeName string
 				var worker *WorkerResources
+				// TODO: Modify this (?)
 				for n, p := range *(*placementPlans)[0] {
 					nodeName = n
 					for _, w := range *p {
@@ -417,7 +434,10 @@ func SchedulingAlgorithm(
 				latestSharePod, err := kubeshareClientSet.KubeshareV1().SharePods(pendingSharePod.Namespace).Get(pendingSharePod.Name, metav1.GetOptions{})
 				if err == nil && latestSharePod.ObjectMeta.UID == pendingSharePod.ObjectMeta.UID {
 					latestSharePod.Spec.NodeName = nodeName
-					if (*highPriorityJob)[0].GpuReq > 0 {
+					// TODO: maybe need to fix gpu check (?)
+					request := (*((*highPriorityJob)[0]))[0]
+					//request := (*((*highPriorityJob)[1]))[0]
+					if request.GpuReq > 0 {
 						if latestSharePod.Annotations == nil {
 							latestSharePod.Annotations = map[string]string{}
 						}
@@ -439,29 +459,51 @@ func SchedulingAlgorithm(
 						}
 						highPrioritySharePodsQueueMutex.Unlock()
 					}
-				} else {
-					log.Errorf("Error when schedule SharePod %s/%s, err: %s", pendingSharePod.ObjectMeta.Namespace, pendingSharePod.ObjectMeta.Name, err)
 				}
-			} else {
-				log.Infof("No resource for SharePod %s/%s", pendingSharePod.Namespace, pendingSharePod.Name)
+				//else {
+				//	log.Errorf("Error when schedule SharePod %s/%s, err: %s", pendingSharePod.ObjectMeta.Namespace, pendingSharePod.ObjectMeta.Name, err)
+				//}
 			}
-		} else {
+		//} else if highPriorityJob == nil {
+		} else { // if no high priority job only (?), nvm but double check the one in front
+			i := 0
 			for _, job := range *waitingQueue {
-				ok, placementPlans := ScheduleJob(
-					&([]*cluster.PodRequests{
-						job.GetPodRequests(tfv1.TFReplicaTypePS),
-						job.GetPodRequests(tfv1.TFReplicaTypeWorker),
-					}),
-					nodeRes,
-				)
-				// log.Infof("************** ERICYEH: OK NUM: %d", ok)
-				// log.Infof("************** ERICYEH: gpu: %d", job.ReplicaRequest[tfv1.TFReplicaTypeWorker].GpuReq)
+				request := &([]*cluster.PodRequests{
+					job.GetPodRequests(tfv1.TFReplicaTypePS),
+					job.GetPodRequests(tfv1.TFReplicaTypeWorker),
+				})
+				log.Infof("************** PRIME: schedule job [%d] in waiting queue with %d ps and %d worker",
+					i, len(*((*request)[0])), len(*((*request)[1])))
+				ok, placementPlans := ScheduleJob(request, nodeRes)
+
+				log.Infof("************** ERICYEH: OK NUM: %d", ok)
+				req := [2]int {
+					int(*job.Spec.TFReplicaSpecs[tfv1.TFReplicaTypePS].Replicas),
+					int(*job.Spec.MinInstances),
+				}
+				log.Infof("************** PRIMA: needed ok: %d", req)
+				log.Infof("************** ERICYEH: gpu: %d", job.ReplicaRequest[tfv1.TFReplicaTypeWorker].GpuReq)
 				if ok[0] >= int(*job.Spec.TFReplicaSpecs[tfv1.TFReplicaTypePS].Replicas) && ok[1] >= int(*job.Spec.MinInstances) {
+					log.Infof("************** PRIME: job [%d] in waiting queue can be scheduled", i)
+
 					job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] = (*placementPlans)[0]
-					job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = (*placementPlans)[1]
 					for _, plan := range *job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS] {
 						for _, worker := range *plan {
 							worker.Critical = true
+						}
+					}
+
+					job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] = (*placementPlans)[1]
+					// TODO: uncomment if want to make 1st worker critical
+					flg := false
+					for _, plan := range *job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker] {
+						for _, worker := range *plan {
+							worker.Critical = true
+							flg = true
+							break
+						}
+						if flg {
+							break
 						}
 					}
 
@@ -473,18 +515,23 @@ func SchedulingAlgorithm(
 					lastActionTime = metav1.Now()
 					break
 				}
+				log.Infof("************** PRIME: job [%d] can't be scheduled", i)
+				i += 1
 			}
 		}
 	}
 
-	log.Errorf("================ Scheduling Algo P3 Enter ===================")
+	log.Infof("================ Scheduling Algo P3 Enter ===================")
 
 	/*
 	 * Scheduling Phase 3
 	 * If no any action over 60 secs, try to scale up workers of jobs in
 	 * running queue.
 	 */
-
+	//log.Infof("===== check ScaleUp at timestamp [%f] =============",
+	//	metav1.Now().Sub(BaseTime.Time).Seconds())
+	//log.Infof("===== check ScaleUp at timestamp lastActionTime [%f] =============",
+	//	metav1.Now().Sub(lastActionTime.Time).Seconds())
 	if now := metav1.Now(); now.Sub(lastActionTime.Time).Seconds() >= 60.0 {
 		ok, placementPlan := ScaleUp(*runningQueue, nodeRes)
 		if ok {
@@ -529,12 +576,16 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 
 		stop := false
 		oneNodeOk := true
+		i := -1
 		for groupIdx, requests := range *requestsGroups {
+			i++
+			j := -1
 			for _, request := range *requests {
+				j++
 				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
 					oneNodeOk = false
 					stop = true
-					log.Infof("Break in cpu or mem request")
+					log.Infof("**** Break in cpu or mem request in request group [%d] and pod/worker num %d", i, j)
 					break
 				}
 
@@ -603,7 +654,7 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 					if request.GpuReq > 0 {
 						(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
 					}
-					// log.Infof("*****************ERICYEH 1*********************: %d, %v", request.GpuReq, t.Workers)
+					log.Infof("*****************ERICYEH 1*********************: %d, %v", request.GpuReq, t.Workers)
 				}
 			}
 			if stop {
@@ -622,27 +673,30 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 			return
 		}
 
-		tmpNum := func() (max int) {
-			tmp := make([]int, groupNum)
-			for groupIdx, val := range tmps {
-				tmp[groupIdx] += len(*val)
+		tmp := make([]int, groupNum)
+		for groupIdx, val := range tmps {
+			tmp[groupIdx] += len(*val)
+		}
+		max := 0
+		for _, val := range tmp {
+			if val > max {
+				max = val
 			}
-			max = 0
-			for _, val := range tmp {
-				if val > max {
-					max = val
-				}
-			}
-			return
-		}()
-		if tmpNum > maxSlot {
-			maxSlot, maxSlotNode = tmpNum, nodeName
+		}
+		//tmpNum := func() (max int) {
+		//	return
+		//}()
+
+		if max > maxSlot {
+			maxSlot, maxSlotNode = max, nodeName
 		}
 	}
 
 	if maxSlot == 0 {
 		return
 	}
+
+	log.Infof("******** PRIME: Cant allocated in one node, maxslot node name: %s with capacity %d", maxSlotNode, maxSlot)
 
 	// worker cross node
 	nodeRes = *constNodeRes.DeepCopy()
@@ -744,7 +798,10 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 		}
 		for groupIdx, tmp := range tmps {
 			if len(*tmp) > 0 {
+				log.Infof("****** PRIME: request [%d] can be placed in node %s with %d pods", groupIdx, nodeName, len(*tmp))
 				(*placementPlans[groupIdx])[nodeName] = tmp
+			} else {
+				log.Infof("****** PRIME: request [%d] can't be placed in node %s", groupIdx, nodeName)
 			}
 		}
 	}
@@ -752,11 +809,105 @@ func ScheduleJob(requestsGroups *[]*cluster.PodRequests, constNodeRes cluster.No
 	return
 }
 
+// O( NM + MDR + NMDR )
+// O( NM + NMDR )
+// O( NMDR )
 // TODO: update as in the report
 // ScaleDown scale down other jobs let high priority job runs.
 // ScaleDown is only called if high priority job exists.
-func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
-	log.Infof("================= ScaleDown Start =================")
+//func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
+//	log.Infof("================= ScaleDown Start =================")
+//	defer log.Infof("================== ScaleDown End ==================")
+//
+//	// Don't modify original one
+//	nodeRes := *constNodeRes.DeepCopy()
+//	scaleDownTarget = make(JobsPlacementPlan)
+//	can = false
+//
+//	// Run over running jobs to free resources
+//	for _, runJob := range runningQueue {
+//		i := int32(0)
+//		maxDeleteCount := int32(runJob.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count()) - *(runJob.Spec.MinInstances)
+//		runJobReq := runJob.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+//		if maxDeleteCount < 0 {
+//			log.Errorf("WHY running worker - min instances < 0 ???")
+//		}
+//		stop := false
+//		// run over each worker but can't delete over max delete count
+//		for _, nodeName := range SortNodeFromJob(runJob) {
+//			plan := (*runJob.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[nodeName]
+//			for workerID, worker := range *plan {
+//
+//				// test if request can be scheduled
+//				log.Infof("Scale Down schedule test start...")
+//				ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+//
+//				if ok[0] == len(*highPriorityJob) {
+//					log.Infof("Scale Down successful!")
+//					highPriorityJobPlacementPlan = tmp
+//					can = true
+//					return
+//				}
+//
+//				if i >= maxDeleteCount {
+//					stop = true
+//					break
+//				}
+//
+//				// Cannot release this resource due to it's critical
+//				if worker.Critical {
+//					continue
+//				}
+//
+//				// scale down one worker
+//				res := nodeRes[nodeName]
+//				res.CpuFree += runJobReq.CpuReq
+//				res.MemFree += runJobReq.MemReq
+//
+//				if option.KubeShareSupport { // kubeshare/gpu
+//					if gpuid, ok := (*worker).Workers[cluster.ResourceKubeShareGPU]; ok {
+//						res.GpuFree[gpuid].GPUFreeReq += runJobReq.GpuReq
+//						res.GpuFree[gpuid].GPUFreeMem += runJobReq.GpuMemReq
+//					}
+//				} else { // nvidia.com/gpu
+//					if _, ok := (*worker).Workers[cluster.ResourceNvidiaGPU]; ok {
+//						res.GpuFreeCount += int(runJobReq.GpuReq / 1000)
+//					}
+//				}
+//				// log.Infof("************************************ DEBUG ************************************")
+//				// nodeRes.PrintMe()
+//				// log.Infof("************************************ DEBUG ************************************")
+//
+//				// make a temporary copy. apply to origin only if can scale down
+//				if _, ok := scaleDownTarget[runJob]; !ok {
+//					scaleDownTarget[runJob] = runJob.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+//				}
+//				delete((*(*scaleDownTarget[runJob])[nodeName]), workerID)
+//
+//				i++
+//			}
+//			if stop {
+//				break
+//			}
+//		}
+//	}
+//
+//	// final test if request can be scheduled
+//	log.Infof("Scale Down schedule test start...")
+//	ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+//
+//	if ok[0] == len(*highPriorityJob) {
+//		log.Infof("Scale Down successful!")
+//		highPriorityJobPlacementPlan = tmp
+//		can = true
+//		return
+//	}
+//
+//	return
+//}
+
+func ScaleDownMod(highPriorityJobs *[]*cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
+	log.Infof("================= ScaleDown Start with %d running jobs in queue =================", len(runningQueue))
 	defer log.Infof("================== ScaleDown End ==================")
 
 	// Don't modify original one
@@ -764,91 +915,378 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 	scaleDownTarget = make(JobsPlacementPlan)
 	can = false
 
-	// Run over running jobs to free resources
-	for _, runJob := range runningQueue {
-		i := int32(0)
-		maxDeleteCount := int32(runJob.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count()) - *(runJob.Spec.MinInstances)
-		runJobReq := runJob.ReplicaRequest[tfv1.TFReplicaTypeWorker]
-		if maxDeleteCount < 0 {
-			log.Errorf("WHY running worker - min instances < 0 ???")
+	runningJobsNum := len(runningQueue)
+	canBeScaledNum := 0
+	canBeScaledJobs := make([]bool, runningJobsNum)
+	jobsWorkerNum := make([]int32, runningJobsNum)
+	jobsOrderedNodesName := make([][]string, runningJobsNum)
+	//PSNodeNames := getNodeNameOfJobsPSNode(&runningQueue)
+	//requestNum := len(*highPriorityJobs)
+
+	for i := 0; i < runningJobsNum; i++ {
+		job := runningQueue[i]
+		jobsOrderedNodesName[i] = SortNodeFromJob(job)
+		jobsWorkerNum[i] = int32(runningQueue[i].ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
+		canBeScaledJobs[i] = jobsWorkerNum[i] > *(job.Spec.MinInstances)
+
+		if canBeScaledJobs[i] {
+			canBeScaledNum++
 		}
-		stop := false
-		// run over each worker but can't delete over max delete count
-		for _, nodeName := range SortNodeFromJob(runJob) {
-			plan := (*runJob.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[nodeName]
-			for workerID, worker := range *plan {
 
-				// test if request can be scheduled
-				log.Infof("Scale Down schedule test start...")
-				ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+		scaleLogStr := "cannot be scaled down"
+		if canBeScaledJobs[i] {
+			scaleLogStr = "can be scaled down"
+		}
+		log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
+	}
 
-				if ok[0] == len(*highPriorityJob) {
-					log.Infof("Scale Down successful!")
-					highPriorityJobPlacementPlan = tmp
-					can = true
-					return
+	log.Infof("======== ScaleDown initially has %d jobs can be scaled down =======", canBeScaledNum)
+
+	k := 0
+	for range *highPriorityJobs {
+		log.Infof("======== ScaleDown start from request [%d] ========", k)
+		k++
+
+		for canBeScaledNum != 0 {
+			ok, tmp := ScheduleJob(highPriorityJobs, nodeRes)
+
+			flg := true
+			for i := 0; i < len(ok); i++ {
+				flg = flg && ok[i] == len(*((*highPriorityJobs)[i]))
+			}
+			if flg {
+				log.Infof("========= Scale Down successful! =========")
+
+				highPriorityJobPlacementPlan = tmp
+				can = true
+
+				break
+			}
+
+			selectedJobIdx := -1
+			for i := 0; i < runningJobsNum; i++ {
+				if canBeScaledJobs[i] && (selectedJobIdx == -1 ||
+					jobsWorkerNum[i] > jobsWorkerNum[selectedJobIdx]) {
+					selectedJobIdx = i
 				}
+			}
 
-				if i >= maxDeleteCount {
-					stop = true
+			log.Infof("======== Job [%d] selected =======", selectedJobIdx)
+
+			job := runningQueue[selectedJobIdx]
+			jobReq := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+			isSuccess := false
+
+			// better to store `SortNodeFromJob(job)` in array? e.g => sortedNode[job]
+			for _, nodeName := range jobsOrderedNodesName[selectedJobIdx] {
+				log.Infof("======== Node [%s] for job [%d] selected =======", nodeName, selectedJobIdx)
+
+				stopFlg := false
+				plan := (*job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[nodeName]
+
+				for workerID, worker := range *plan {
+					log.Infof("======== Worker [%s] in node [%s] for job [%d] selected =======", workerID, nodeName, selectedJobIdx)
+
+					if worker.Critical {
+						log.Infof("======== Worker [%s] in node [%s] for job [%d] is CRITICAL!! =======", workerID, nodeName, selectedJobIdx)
+						continue
+					}
+
+					res := nodeRes[nodeName]
+					res.CpuFree += jobReq.CpuReq
+					res.MemFree += jobReq.MemReq
+
+					if option.KubeShareSupport { // kubeshare/gpu
+						if gpuid, ok := (*worker).Workers[cluster.ResourceKubeShareGPU]; ok {
+							res.GpuFree[gpuid].GPUFreeReq += jobReq.GpuReq
+							res.GpuFree[gpuid].GPUFreeMem += jobReq.GpuMemReq
+						}
+					} else { // nvidia.com/gpu
+						if _, ok := (*worker).Workers[cluster.ResourceNvidiaGPU]; ok {
+							res.GpuFreeCount += int(jobReq.GpuReq / 1000)
+						}
+					}
+
+					// log.Infof("************************************ DEBUG ************************************")
+					// nodeRes.PrintMe()
+					// log.Infof("************************************ DEBUG ************************************")
+
+					// make a temporary copy. apply to origin only if can scale down
+					if _, ok := scaleDownTarget[job]; !ok {
+						scaleDownTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+					}
+
+					delete(*(*scaleDownTarget[job])[nodeName], workerID)
+
+					log.Infof("======== Worker [%s] in node [%s] for job [%d] successfully selected to terminated =======", workerID, nodeName, selectedJobIdx)
+
+					stopFlg = true
 					break
 				}
 
-				// Cannot release this resource due to it's critical
-				if worker.Critical {
-					continue
+				if stopFlg {
+					isSuccess = true
+					break
 				}
-
-				// scale down one worker
-				res := nodeRes[nodeName]
-				res.CpuFree += runJobReq.CpuReq
-				res.MemFree += runJobReq.MemReq
-
-				if option.KubeShareSupport { // kubeshare/gpu
-					if gpuid, ok := (*worker).Workers[cluster.ResourceKubeShareGPU]; ok {
-						res.GpuFree[gpuid].GPUFreeReq += runJobReq.GpuReq
-						res.GpuFree[gpuid].GPUFreeMem += runJobReq.GpuMemReq
-					}
-				} else { // nvidia.com/gpu
-					if _, ok := (*worker).Workers[cluster.ResourceNvidiaGPU]; ok {
-						res.GpuFreeCount += int(runJobReq.GpuReq / 1000)
-					}
-				}
-				// log.Infof("************************************ DEBUG ************************************")
-				// nodeRes.PrintMe()
-				// log.Infof("************************************ DEBUG ************************************")
-
-				// make a temporary copy. apply to origin only if can scale down
-				if _, ok := scaleDownTarget[runJob]; !ok {
-					scaleDownTarget[runJob] = runJob.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
-				}
-				delete((*(*scaleDownTarget[runJob])[nodeName]), workerID)
-
-				i++
 			}
-			if stop {
+
+			jobsWorkerNum[selectedJobIdx]--
+			if !isSuccess || jobsWorkerNum[selectedJobIdx] <= *(job.Spec.MinInstances) {
+				if !isSuccess {
+					log.Infof("======== Job [%d] unsuccessful to scaled down =======", selectedJobIdx)
+				} else {
+					log.Infof("======== Worker for job [%d] already reached minimum limit =======", selectedJobIdx)
+				}
+
+				canBeScaledJobs[selectedJobIdx] = false
+				canBeScaledNum--
+			}
+
+			//for currNodeName, currNode := range *(job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker]) {
+			//	if currNodeName != priorityNodeName {
+			//		nodeName, node = currNodeName, currNode
+			//	}
+			//}
+			//
+			//if node == nil {
+			//	nodeName, node = priorityNodeName, (*job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[priorityNodeName]
+			//}
+		}
+
+		if !can {
+			ok, tmp := ScheduleJob(highPriorityJobs, nodeRes)
+			flg := true
+			for i := 0; i < len(ok); i++ {
+				flg = flg && ok[i] == len(*((*highPriorityJobs)[i]))
+			}
+			if flg {
+				log.Infof("========= Scale Down successful! =========")
+
+				highPriorityJobPlacementPlan = tmp
+				can = true
+
 				break
 			}
+		} else {
+			break
 		}
 	}
 
-	// final test if request can be scheduled
-	log.Infof("Scale Down schedule test start...")
-	ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
-
-	if ok[0] == len(*highPriorityJob) {
-		log.Infof("Scale Down successful!")
-		highPriorityJobPlacementPlan = tmp
-		can = true
-		return
+	for i, job := range runningQueue {
+		if _, ok := scaleDownTarget[job]; ok {
+			for name, node := range *scaleDownTarget[job] {
+				log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
+			}
+		}
 	}
 
 	return
 }
 
-// TODO: update as in the report
-func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleUpTarget JobsPlacementPlan) {
-	log.Infof("================= ScaleUp Start With %d Jobs =================", len(runningQueue))
+// ScaleDown scale down other jobs let high priority job runs.
+// ScaleDown is only called if high priority job exists.
+func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
+	//log.Infof("================= ScaleDown Start with %d priority jobs and %d running jobs in queue =================", len(*highPriorityJob), len(runningQueue))
+	//defer log.Infof("================== ScaleDown End ==================")
+
+	// Don't modify original one
+	nodeRes := *constNodeRes.DeepCopy()
+	scaleDownTarget = make(JobsPlacementPlan)
+	can = false
+
+	runningJobsNum := len(runningQueue)
+	canBeScaledNum := 0
+	canBeScaledJobs := make([]bool, runningJobsNum)
+	jobsWorkerNum := make([]int32, runningJobsNum)
+	jobsOrderedNodesName := make([][]string, runningJobsNum)
+	//PSNodeNames := getNodeNameOfJobsPSNode(&runningQueue)
+
+	for i := 0; i < runningJobsNum; i++ {
+		job := runningQueue[i]
+		jobsOrderedNodesName[i] = SortNodeFromJob(job)
+		jobsWorkerNum[i] = int32(runningQueue[i].ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
+		canBeScaledJobs[i] = jobsWorkerNum[i] > *(job.Spec.MinInstances)
+
+		if canBeScaledJobs[i] {
+			canBeScaledNum++
+		}
+
+		//scaleLogStr := "cannot be scaled"
+		//if canBeScaledJobs[i] {
+		//	scaleLogStr = "can be scaled"
+		//}
+		//log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
+	}
+	//log.Infof("======== ScaleDown initially has %d jobs can be scaled up =======", canBeScaledNum)
+
+	// O( NM + MDR + NMDR )
+	// O( NM + NMDR )
+	// O( NMDR )
+	for canBeScaledNum != 0 {
+		ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+		if ok[0] == len(*highPriorityJob) {
+			//log.Infof("========= Scale Down successful! =========")
+			highPriorityJobPlacementPlan = tmp
+			can = true
+			break
+		}
+
+		selectedJobIdx := -1
+		for i := 0; i < runningJobsNum; i++ {
+			if canBeScaledJobs[i] && (selectedJobIdx == -1 ||
+				jobsWorkerNum[i] > jobsWorkerNum[selectedJobIdx]) {
+				selectedJobIdx = i
+			}
+		}
+		//log.Infof("======== Job [%d] selected =======", selectedJobIdx)
+
+		job := runningQueue[selectedJobIdx]
+		jobReq := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+		isSuccess := false
+
+		// better to store `SortNodeFromJob(job)` in array? e.g => sortedNode[job]
+		for _, nodeName := range jobsOrderedNodesName[selectedJobIdx] {
+			//log.Infof("======== Node [%s] for job [%d] selected =======", nodeName, selectedJobIdx)
+			stopFlg := false
+			plan := (*job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[nodeName]
+
+			for workerID, worker := range *plan {
+				//log.Infof("======== Worker [%s] in node [%s] for job [%d] selected =======", workerID, nodeName, selectedJobIdx)
+				if worker.Critical {
+					//log.Infof("======== Worker [%s] in node [%s] for job [%d] is CRITICAL!! =======", workerID, nodeName, selectedJobIdx)
+					continue
+				}
+
+				res := nodeRes[nodeName]
+				res.CpuFree += jobReq.CpuReq
+				res.MemFree += jobReq.MemReq
+
+				if option.KubeShareSupport { // kubeshare/gpu
+					if gpuid, ok := (*worker).Workers[cluster.ResourceKubeShareGPU]; ok {
+						res.GpuFree[gpuid].GPUFreeReq += jobReq.GpuReq
+						res.GpuFree[gpuid].GPUFreeMem += jobReq.GpuMemReq
+					}
+				} else { // nvidia.com/gpu
+					if _, ok := (*worker).Workers[cluster.ResourceNvidiaGPU]; ok {
+						res.GpuFreeCount += int(jobReq.GpuReq / 1000)
+					}
+				}
+
+				// log.Infof("************************************ DEBUG ************************************")
+				// nodeRes.PrintMe()
+				// log.Infof("************************************ DEBUG ************************************")
+
+				// make a temporary copy. apply to origin only if can scale down
+				if _, ok := scaleDownTarget[job]; !ok {
+					scaleDownTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+				}
+
+				delete(*(*scaleDownTarget[job])[nodeName], workerID)
+				//log.Infof("======== Worker [%s] in node [%s] for job [%d] successfully selected to terminated =======", workerID, nodeName, selectedJobIdx)
+
+				stopFlg = true
+				break
+			}
+
+			if stopFlg {
+				isSuccess = true
+				break
+			}
+		}
+
+		jobsWorkerNum[selectedJobIdx]--
+		if !isSuccess || jobsWorkerNum[selectedJobIdx] <= *(job.Spec.MinInstances) {
+			//if !isSuccess {
+			//	log.Infof("======== Job [%d] unsuccessful to scaled down =======", selectedJobIdx)
+			//} else {
+			//	log.Infof("======== Worker for job [%d] already reached minimum limit =======", selectedJobIdx)
+			//}
+			canBeScaledJobs[selectedJobIdx] = false
+			canBeScaledNum--
+		}
+
+		//for currNodeName, currNode := range *(job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker]) {
+		//	if currNodeName != priorityNodeName {
+		//		nodeName, node = currNodeName, currNode
+		//	}
+		//}
+		//
+		//if node == nil {
+		//	nodeName, node = priorityNodeName, (*job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[priorityNodeName]
+		//}
+	}
+
+	if !can {
+		ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+		if ok[0] == len(*highPriorityJob) {
+			//log.Infof("========= Scale Down successful! =========")
+			highPriorityJobPlacementPlan = tmp
+			can = true
+		}
+	}
+
+	//for i, job := range runningQueue {
+	//	if _, ok := scaleDownTarget[job]; ok {
+	//		for name, node := range *scaleDownTarget[job] {
+	//			log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
+	//		}
+	//	}
+	//}
+	return
+}
+
+func isEnoughResources(job *TrainingJob, node *cluster.NodeResource, isSupportKubeShare bool) bool {
+	//log.Infof("================= isEnoughResources Start =================")
+	//defer log.Infof("================== isEnoughResources End ==================")
+	request := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+
+	if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
+		//log.Infof("========== not enough CPU [need %d from %d available] or Mem [need %d from %d available] ============", request.CpuReq, node.CpuFree, request.MemReq, node.MemFree)
+		return false
+	}
+
+	if isSupportKubeShare {
+		if request.GpuReq > 0 {
+			hasFreeGPU := false
+			for _, gpu := range node.GpuFree {
+				if gpu.GPUFreeReq >= request.GpuReq && gpu.GPUFreeMem >= request.GpuMemReq {
+					hasFreeGPU = true
+					break
+				}
+			}
+			if !hasFreeGPU && node.GpuFreeCount <= 0 {
+				//log.Infof("========== not enough GPU KubeShare [GPU free count: %d and no free gpu] ============", node.GpuFreeCount)
+				return false
+			}
+		}
+	} else if request.GpuReq > 0 && node.GpuFreeCount < int(request.GpuReq/1000) {
+		//log.Infof("========== not enough GPU [need %d from %d available] ============", request.GpuReq, node.GpuFreeCount)
+		return false
+	}
+
+	//log.Infof("======== resource enough for the job ========")
+	return true
+}
+
+func getNodeNameOfJobsPSNode(jobs *JobQueue) []string {
+	log.Infof("================= getNodeNameOfJobsPSNode Start With %d Jobs =================", len(*jobs))
+	defer log.Infof("================== getNodeNameOfJobsPSNode End ==================")
+
+	n := len(*jobs)
+	PSNames := make([]string, n)
+
+	for i, job := range *jobs {
+		for nodeName, _ := range *(job.ReplicasPlacementPlan[tfv1.TFReplicaTypePS]) {
+			log.Infof("==== PS of job in index %d, located in Node %s ====", i, nodeName)
+			PSNames[i] = nodeName
+		}
+	}
+
+	return PSNames
+}
+
+func ScaleUp2(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleUpTarget JobsPlacementPlan) {
+	log.Infof("================= ScaleUp Start =================")
 	defer log.Infof("================== ScaleUp End ==================")
 	nodeRes := constNodeRes.DeepCopy()
 	scaleUpTarget = make(JobsPlacementPlan)
@@ -856,22 +1294,14 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 	i := 0
 	runningJobsNum := len(runningQueue)
 	for nodeName, node := range *nodeRes {
-		log.Infof("================= ScaleUp on Node: %s =================", nodeName)
 		for ; i < runningJobsNum; i++ {
-			log.Infof("================= ScaleUp on Node: %s & job index: %d =================", nodeName, i)
 			job := runningQueue[i]
 			maxScaleUpNum := *(job.Spec.MaxInstances) - int32(job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
 			request := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
 
 			stop := false
 			for j := int32(0); j < maxScaleUpNum; j++ {
-
-				log.Errorf("=====  On node %s : with job number %d , try to scale up by %d =====", nodeName, i, j + 1)
-				log.Errorf("=====  Status: CPU node: %d & request CPU: %d ; Memory node: %d & request memory: %d =====", node.CpuFree, request.CpuReq, node.MemFree, request.MemReq)
-
 				if node.CpuFree < request.CpuReq || node.MemFree < request.MemReq {
-					log.Errorf("=====  Node %s : with job number %d , scale up by %d failed =====", nodeName, i, j + 1)
-
 					stop = true
 					break
 				}
@@ -887,8 +1317,6 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 						}
 						if !hasFreeGPU {
 							if node.GpuFreeCount <= 0 {
-								log.Errorf("=====  Node %s : with job number %d , scale up by %d failed by gpu kubeshare =====", nodeName, i, j + 1)
-
 								stop = true
 								break
 							} else {
@@ -926,8 +1354,6 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 				} else { // nvidia.com/gpu
 					if request.GpuReq > 0 {
 						if node.GpuFreeCount < int(request.GpuReq/1000) {
-							log.Errorf("=====  Node %s : with job number %d , scale up by %d failed by gpu =====", nodeName, i, j + 1)
-
 							stop = true
 							log.Infof("Break in nvidia.com/gpu request")
 							break
@@ -957,7 +1383,6 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 				}
 
 				can = true
-				log.Errorf("=====  Node %s : with job number %d , scale up by %d success =====", nodeName, i, j + 1)
 			}
 			if stop {
 				break
@@ -965,6 +1390,152 @@ func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can boo
 		}
 	}
 
+	return
+}
+
+// TODO: update as in the report
+func ScaleUp(runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleUpTarget JobsPlacementPlan) {
+	//log.Infof("================= ScaleUp Start With %d Jobs =================", len(runningQueue))
+	//defer log.Infof("================== ScaleUp End ==================")
+
+	//kubeSuppLogStr := "kubeShare supp not available"
+	//if option.KubeShareSupport {
+	//	kubeSuppLogStr = "kubeShare supp is available"
+	//}
+	//log.Infof("========== %s =========", kubeSuppLogStr)
+
+	nodeRes := constNodeRes.DeepCopy()
+	scaleUpTarget = make(JobsPlacementPlan)
+	runningJobsNum := len(runningQueue)
+	canBeScaledNum := 0
+	canBeScaledJobs := make([]bool, runningJobsNum)
+	jobsWorkerNum := make([]int32, runningJobsNum)
+	PSNodeNames := getNodeNameOfJobsPSNode(&runningQueue)
+
+	for i := 0; i < runningJobsNum; i++ {
+		job := runningQueue[i]
+		jobsWorkerNum[i] = int32(runningQueue[i].ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
+		canBeScaledJobs[i] = jobsWorkerNum[i] < *(job.Spec.MaxInstances)
+
+		if canBeScaledJobs[i] {
+			canBeScaledNum++
+		}
+
+		scaleLogStr := "cannot be scaled up"
+		if canBeScaledJobs[i] {
+			scaleLogStr = "can be scaled up"
+		}
+		log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
+	}
+	//log.Infof("======== ScaleUp initially has %d jobs can be scaled up =======", canBeScaledNum)
+
+	for canBeScaledNum != 0 {
+		selectedJobIdx := -1
+		for i := 0; i < runningJobsNum; i++ {
+			if canBeScaledJobs[i] && (selectedJobIdx == -1 ||
+				jobsWorkerNum[i] < jobsWorkerNum[selectedJobIdx]) {
+				selectedJobIdx = i
+			}
+		}
+		//log.Infof("======== Job with index %d selected =======", selectedJobIdx)
+
+		job := runningQueue[selectedJobIdx]
+		request := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
+		priorityNode := (*nodeRes)[PSNodeNames[selectedJobIdx]]
+
+		var node *cluster.NodeResource = nil
+		nodeName := ""
+
+		//log.Infof("======== Check node [%s] resources for scale up job with index %d =======", PSNodeNames[selectedJobIdx], selectedJobIdx)
+		if isEnoughResources(job, priorityNode, option.KubeShareSupport) {
+			//log.Infof("======== Checked node [%s] resources for scale up job with index %d =======", PSNodeNames[selectedJobIdx], selectedJobIdx)
+			node, nodeName = priorityNode, PSNodeNames[selectedJobIdx]
+		} else {
+			for currNodeName, currNode := range *nodeRes {
+				//log.Infof("======== LP - Check node [%s] resources for scale up job with index %d =======", currNodeName, selectedJobIdx)
+				if currNode != priorityNode && isEnoughResources(job, currNode, option.KubeShareSupport) {
+					//log.Infof("======== LP - Checked node [%s] resources for scale up job with index %d =======", currNodeName, selectedJobIdx)
+					node, nodeName = currNode, currNodeName
+					break
+				}
+			}
+		}
+
+		if node != nil {
+			//log.Infof("======== Node [%s] selected for job with index %d =======", nodeName, selectedJobIdx)
+			if _, ok := scaleUpTarget[job]; !ok {
+				scaleUpTarget[job] = job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].DeepCopy()
+			}
+
+			if _, ok := (*scaleUpTarget[job])[nodeName]; !ok {
+				(*scaleUpTarget[job])[nodeName] = &NodeResPlacePlan{}
+			}
+
+			t := &WorkerResources{
+				Workers:  map[string]string{},
+				Critical: false,
+			}
+
+			(*(*scaleUpTarget[job])[nodeName])[NewWorkerID(5)] = t
+
+			node.CpuFree -= request.CpuReq
+			node.MemFree -= request.MemReq
+
+			if !option.KubeShareSupport {
+				if request.GpuReq > 0 {
+					node.GpuFreeCount -= int(request.GpuReq / 1000)
+					(*t).Workers[cluster.ResourceNvidiaGPU] = fmt.Sprintf("%d", (request.GpuReq / 1000))
+				}
+			} else {
+				hasFreeGPU, freeGPUID := false, ""
+				if request.GpuReq > 0 {
+					for id, gpu := range node.GpuFree {
+						if gpu.GPUFreeReq >= request.GpuReq && gpu.GPUFreeMem >= request.GpuMemReq {
+							hasFreeGPU, freeGPUID = true, id
+							break
+						}
+					}
+					if !hasFreeGPU {
+						node.GpuFreeCount--
+						freeGPUID = kubesharev1.NewGPUID(5)
+						node.GpuFree[freeGPUID] = &cluster.GPUInfo{
+							GPUFreeReq: 1000,
+							GPUFreeMem: node.GpuMemTotal,
+						}
+					}
+					(*t).Workers[cluster.ResourceKubeShareGPU] = freeGPUID
+				}
+			}
+			jobsWorkerNum[selectedJobIdx]++
+			can = true
+			//log.Infof("======== Finished scale up in Node [%s] for job with index %d =======", nodeName, selectedJobIdx)
+		}
+
+		if node == nil || jobsWorkerNum[selectedJobIdx] >= *(job.Spec.MaxInstances) {
+			//if node == nil {
+			//	log.Infof("======== No node found for job with index %d =======", selectedJobIdx)
+			//} else {
+			//	log.Infof("======== Worker num already reached limit for job with index %d =======", selectedJobIdx)
+			//}
+			canBeScaledJobs[selectedJobIdx] = false
+			canBeScaledNum--
+		}
+	}
+
+	//for i, job := range runningQueue {
+	//	if _, ok := scaleUpTarget[job]; ok {
+	//		for name, node := range *scaleUpTarget[job] {
+	//			log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
+	//		}
+	//	}
+	//}
+	//for i := 0; i < runningJobsNum; i++ {
+	//	flg := 0
+	//	if canBeScaledJobs[i] {
+	//		flg = 1
+	//	}
+	//	log.Infof("======== Job [%d]: curr worker %d, is can be scaled: %d =======", i, jobsWorkerNum[i], flg)
+	//}
 	return
 }
 

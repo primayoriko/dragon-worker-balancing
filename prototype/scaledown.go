@@ -16,7 +16,7 @@ var (
 	option             *options.ServerOption
 )
 
-// SortNodeFromJob sort node priority from job's placement paln,
+// SortNodeFromJob sort node priority from job's placement plan,
 // from the least important to the most
 func SortNodeFromJob(job *TrainingJob) (sortedNodes []string) {
 	/*
@@ -47,11 +47,10 @@ func SortNodeFromJob(job *TrainingJob) (sortedNodes []string) {
 	return
 }
 
-// TODO: update as in the report
 // ScaleDown scale down other jobs let high priority job runs.
 // ScaleDown is only called if high priority job exists.
 func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, constNodeRes cluster.NodeResources) (can bool, scaleDownTarget JobsPlacementPlan, highPriorityJobPlacementPlan *[]*JobPlacementPlan) {
-	log.Infof("================= ScaleDown Start =================")
+	log.Infof("================= ScaleDown Start with %d priority jobs and %d running jobs in queue =================", len(*highPriorityJob), len(runningQueue))
 	defer log.Infof("================== ScaleDown End ==================")
 
 	// Don't modify original one
@@ -63,27 +62,37 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 	canBeScaledNum := 0
 	canBeScaledJobs := make([]bool, runningJobsNum)
 	jobsWorkerNum := make([]int32, runningJobsNum)
+	jobsOrderedNodesName := make([][]string, runningJobsNum)
 	//PSNodeNames := getNodeNameOfJobsPSNode(&runningQueue)
 
 	for i := 0; i < runningJobsNum; i++ {
 		job := runningQueue[i]
+		jobsOrderedNodesName[i] = SortNodeFromJob(job)
 		jobsWorkerNum[i] = int32(runningQueue[i].ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker].Count())
 		canBeScaledJobs[i] = jobsWorkerNum[i] > *(job.Spec.MinInstances)
 
 		if canBeScaledJobs[i] {
 			canBeScaledNum++
 		}
+
+		scaleLogStr := "cannot be scaled"
+		if canBeScaledJobs[i] {
+			scaleLogStr = "can be scaled"
+		}
+		log.Infof("======== Job [%d]: curr worker %d, %s =======", i, jobsWorkerNum[i], scaleLogStr)
 	}
+
+	log.Infof("======== ScaleDown initially has %d jobs can be scaled up =======", canBeScaledNum)
 
 	for canBeScaledNum != 0 {
 		ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
 		if ok[0] == len(*highPriorityJob) {
-			log.Infof("Scale Down successful!")
+			log.Infof("========= Scale Down successful! =========")
 
 			highPriorityJobPlacementPlan = tmp
 			can = true
 
-			return
+			break
 		}
 
 		selectedJobIdx := -1
@@ -94,17 +103,24 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 			}
 		}
 
+		log.Infof("======== Job [%d] selected =======", selectedJobIdx)
+
 		job := runningQueue[selectedJobIdx]
 		jobReq := job.ReplicaRequest[tfv1.TFReplicaTypeWorker]
 		isSuccess := false
 
-		// TODO: is it better to store `SortNodeFromJob(job)` in array? e.g => sortedNode[job]
-		for _, nodeName := range SortNodeFromJob(job) {
+		// better to store `SortNodeFromJob(job)` in array? e.g => sortedNode[job]
+		for _, nodeName := range jobsOrderedNodesName[selectedJobIdx] {
+			log.Infof("======== Node [%s] for job [%d] selected =======", nodeName, selectedJobIdx)
+
 			stopFlg := false
 			plan := (*job.ReplicasPlacementPlan[tfv1.TFReplicaTypeWorker])[nodeName]
 
 			for workerID, worker := range *plan {
+				log.Infof("======== Worker [%s] in node [%s] for job [%d] selected =======", workerID, nodeName, selectedJobIdx)
+
 				if worker.Critical {
+					log.Infof("======== Worker [%s] in node [%s] for job [%d] is CRITICAL!! =======", workerID, nodeName, selectedJobIdx)
 					continue
 				}
 
@@ -134,6 +150,8 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 
 				delete(*(*scaleDownTarget[job])[nodeName], workerID)
 
+				log.Infof("======== Worker [%s] in node [%s] for job [%d] successfully selected to terminated =======", workerID, nodeName, selectedJobIdx)
+
 				stopFlg = true
 				break
 			}
@@ -146,6 +164,12 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 
 		jobsWorkerNum[selectedJobIdx]--
 		if !isSuccess || jobsWorkerNum[selectedJobIdx] <= *(job.Spec.MinInstances) {
+			if !isSuccess {
+				log.Infof("======== Job [%d] unsuccessful to scaled down =======", selectedJobIdx)
+			} else {
+				log.Infof("======== Worker for job [%d] already reached minimum limit =======", selectedJobIdx)
+			}
+
 			canBeScaledJobs[selectedJobIdx] = false
 			canBeScaledNum--
 		}
@@ -161,11 +185,22 @@ func ScaleDown(highPriorityJob *cluster.PodRequests, runningQueue JobQueue, cons
 		//}
 	}
 
-	ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
-	if ok[0] == len(*highPriorityJob) {
-		log.Infof("Scale Down successful!")
-		highPriorityJobPlacementPlan = tmp
-		can = true
+	if !can {
+		ok, tmp := ScheduleJob(&([]*cluster.PodRequests{highPriorityJob}), nodeRes)
+		if ok[0] == len(*highPriorityJob) {
+			log.Infof("========= Scale Down successful! =========")
+
+			highPriorityJobPlacementPlan = tmp
+			can = true
+		}
+	}
+
+	for i, job := range runningQueue {
+		if _, ok := scaleDownTarget[job]; ok {
+			for name, node := range *scaleDownTarget[job] {
+				log.Infof("Job [%d] in node [%s] has %d worker", i, name, len(*node))
+			}
+		}
 	}
 
 	return

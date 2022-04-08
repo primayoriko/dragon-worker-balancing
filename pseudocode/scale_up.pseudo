@@ -1,0 +1,64 @@
+INPUT
+  running_queue (JobQueue):
+    antrian yang berisi job yang sedang berjalan
+  node_res (NodeResources):
+    informasi resource pada setiap Node
+
+CONST
+  running_job_num (integer):
+    banyak job di running_queue
+
+VARIABLES
+  can_be_scaled_num (integer):
+    banyak job yang bisa dilakukan scale up
+  can_be_scaled_jobs (array of boolean):
+    informasi apakah bisa dilakukan scale up pada tiap job yang sedang berjalan
+  jobs_worker_num (array of integer):
+    banyak worker pada tiap job (termasuk yang baru direncanakan)
+  ps_node_names (array of string):
+    nama node prioritas (lokalitas tertinggi) dari tiap job yang sedang berjalan
+  scale_up_plan (JobsPlacementPlan):
+    kumpulan plan akhir dari scale up job yang sedang berjalan
+
+SUBFUNCTIONS
+  is_enough_resources(job: TrainingJob, node: Node) → boolean :
+    mengecek apakah bisa menjadwalkan worker baru dari suatu job ke node tertentu
+
+SUBPROCEDURES
+  make_plan(job: TrainingJob, node: NodeResource) → JobPlacementPlan :
+    menghasilkan plan untuk menjadwalkan penambahan sebuah worker pada suatu node
+
+
+while can_be_scaled_num > 0 do
+  selected_job_idx ← -1
+
+  for i ∊ [0..running_job_num) do
+    if can_be_scaled_jobs[i] and (selected_job_idx = -1 or jobs_worker_num[i] < jobs_worker_num[selected_job_idx]) then
+      selected_job_idx ← i
+    end if
+  end for
+  
+  is_scaled_up ← false
+
+  if is_enough_resources(running_queue[selected_job_idx], node_res[ps_node_names[selected_job_idx]]) then
+    scale_up_plan.add(make_plan(running_queue[selected_job_idx], node_res[ps_node_names[selected_job_idx]]))
+    jobs_worker_num[selected_job_idx] ← jobs_worker_num[selected_job_idx] + 1
+    is_scaled_up ← true
+  else if 
+    for each tuple of node_name, node_resources ∊ node_res do
+      if node_name ≠ ps_node_names[selected_job_idx] and is_enough_resources(running_queue[selected_job_idx], node_res[node_name]) then
+        scale_up_plan.add(make_plan(running_queue[selected_job_idx], node_res[ps_node_names[selected_job_idx]]))
+        jobs_worker_num[selected_job_idx] ← jobs_worker_num[selected_job_idx] + 1
+        is_scaled_up ← true
+        break
+      end if
+    end for
+  end if
+
+  if not is_scaled_up or jobs_worker_num[selected_job_idx] >= running_queue[selected_job_idx].max_workers_num then
+    can_be_scaled_num = can_be_scaled_num - 1
+    can_be_scaled_jobs[selected_job_idx] = false
+  end if
+end while
+
+→ scale_up_plan

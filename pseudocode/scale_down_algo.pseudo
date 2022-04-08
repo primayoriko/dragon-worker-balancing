@@ -1,0 +1,29 @@
+can := false
+
+while can_be_scaled_num > 0 do
+  <ok, plan> := schedule_request(request, node_res)
+
+  if ok then 
+    can := true
+    placement_plan := plan
+    break
+  end if
+
+  selected_job_idx ← -1
+
+  for i ∊ [0..running_job_num) do
+    if can_be_scaled_jobs[i] and (selected_job_idx = -1 or jobs_worker_num[i] > jobs_worker_num[selected_job_idx]) then
+      selected_job_idx ← i
+    end if
+  end for
+  
+  is_scaled_down ← false
+
+  for node_name in jobs_ordered_nodes_name[selected_job_idx] do
+    stop := false
+
+
+  end for
+end while
+
+→ tuple of <can, placement_plan>

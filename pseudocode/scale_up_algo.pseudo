@@ -1,0 +1,35 @@
+while can_be_scaled_num > 0 do
+  selected_job_idx ← -1
+
+  for i ∊ [0..running_job_num) do
+    if can_be_scaled_jobs[i] and (selected_job_idx = -1 or jobs_worker_num[i] < jobs_worker_num[selected_job_idx]) then
+      selected_job_idx ← i
+    end if
+  end for
+  
+  is_scaled_up ← false
+  job ← running_queue[selected_job_idx]
+  priority_node_name ← ps_node_names[selected_job_idx]
+  
+  if is_enough_resources(job, node_res[priority_node_name]) then
+    scale_up_plan.add(make_plan(job, node_res[priority_node_name]))
+    jobs_worker_num[selected_job_idx] ← jobs_worker_num[selected_job_idx] + 1
+    is_scaled_up ← true
+  else if 
+    for each tuple of node_name, node_resources ∊ node_res do
+      if node_name ≠ priority_node_name and is_enough_resources(job, node_res[node_name]) then
+        scale_up_plan.add(make_plan(job, node_res[priority_node_name]))
+        jobs_worker_num[selected_job_idx] ← jobs_worker_num[selected_job_idx] + 1
+        is_scaled_up ← true
+        break
+      end if
+    end for
+  end if
+
+  if not is_scaled_up or jobs_worker_num[selected_job_idx] >= job.max_workers_num then
+    can_be_scaled_num = can_be_scaled_num - 1
+    can_be_scaled_jobs[selected_job_idx] = false
+  end if
+end while
+
+→ scale_up_plan

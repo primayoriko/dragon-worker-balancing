@@ -1,0 +1,93 @@
+INPUT
+  request (PodRequests):
+    job atau sekumpulan sub-job (worker / ps) baru yang ingin ditambahkan 
+  running_queue (array of TrainingJob):
+    antrian yang berisi job yang sedang berjalan
+  node_res (NodeResources):
+    informasi resource pada setiap Node
+
+CONSTANTS
+  running_job_num (integer):
+    banyak job di running_queue
+  jobs_ordered_nodes_name (array of array of string):
+    nama node terurut dari lokalitas terendah dari tiap job yang sedang berjalan
+
+VARIABLES
+  can_be_scaled_num (integer):
+    banyak job yang bisa dilakukan scale down
+  can_be_scaled_jobs (array of boolean):
+    informasi apakah bisa dilakukan scale down pada tiap job yang sedang berjalan
+  jobs_worker_num (array of integer):
+    banyak worker pada tiap job (termasuk yang baru direncanakan)
+
+SUBFUNCTIONS
+  schedule_request(request: PodRequests, node_res: NodeResources) → tuple of <boolean, JobPlacementPlan> :
+    mengecek apakah permintaan alokasi bisa dipenuhi, sekaligus mengembalikan plan penempatannya
+
+SUBPROCEDURES
+  free_worker(worker_id: string, node_name: string, job: TrainingJob, node_res: NodeResources, placement_plan: JobPlacementPlan) :
+    memberhentikan sebuah worker dari sebuah job pada node tertentu,
+    sekaligus memperbarui info sumber daya pada node tersebut dan juga plan penempatan worker dari job terkait
+
+OUTPUT
+  can (boolean):
+    informasi apakah scale down untuk mengalokasikan sumber daya untuk job baru berhasil dilakukan
+  placement_plan (JobPlacementPlan):
+    plan penempatan permintaan setelah scale down job yang sedang berjalan dilakukan
+
+can ← false
+
+while can_be_scaled_num > 0 do
+  <ok, plan> ← schedule_request(request, node_res)
+
+  if ok then 
+    can ← true
+    placement_plan ← plan
+    break
+  end if
+
+  selected_job_idx ← -1
+
+  for i ∊ [0..running_job_num) do
+    if can_be_scaled_jobs[i] and (selected_job_idx = -1 or jobs_worker_num[i] > jobs_worker_num[selected_job_idx]) then
+      selected_job_idx ← i
+    end if
+  end for
+  
+  is_scaled_down ← false
+  job ← running_queue[selected_job_idx]
+
+  for node_name ∊ jobs_ordered_nodes_name[selected_job_idx] do
+    stop ← false
+    node_plan ← job.ReplicasPlacementPlan["Worker"][node_name]
+
+    for tuple of <worker_id, worker> ∊ node_plan do 
+      if not worker.Critical then
+          free_worker(worker_id, node_name, job, node_res, placement_plan)
+          jobs_worker_num[selected_job_idx] ← jobs_worker_num[selected_job_idx] - 1
+          is_scaled_down ← true
+          break
+      end if
+    end for
+
+    if is_scaled_down then
+      break
+    end if
+  end for
+
+  if not is_scaled_down or jobs_worker_num[selected_job_idx] = job.Spec.MinInstances then
+    can_be_scaled_jobs[selected_job_idx] ← false
+    can_be_scaled_num ← can_be_scaled_num - 1
+  end if
+end while
+
+if not can then
+  <ok, plan> ← schedule_request(request, node_res)
+  if ok then 
+    can ← true
+    placement_plan ← plan
+    break
+  end if
+end if
+
+→ tuple of <can, placement_plan>
